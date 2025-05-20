@@ -1,0 +1,7 @@
+weights_dump/
+info.txt
+extern/
+
+# executables 
+cublas_gemm
+test
