@@ -1,5 +1,5 @@
 weights_dump/
-info.txt
+*.txt
 extern/
 
 # executables 
