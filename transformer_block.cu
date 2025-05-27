@@ -88,10 +88,10 @@ void self_attention(
 
     // split QKV into Q, K, V
     float* Q_d;
+    cudaMalloc(&Q_d, sizeof(float)*block_size*head_dim); // allocate Q
     float* K_d;
-    float* V_d;
-    cudaMalloc(&Q_d, sizeof(float)*block_size*head_dim); // allocate K
     cudaMalloc(&K_d, sizeof(float)*block_size*head_dim); // allocate K
+    float* V_d;
     cudaMalloc(&V_d, sizeof(float)*block_size*head_dim); // allovate V 
     dim3 dim_block(BLOCK_SIZE); // create the block dim 
     dim3 dim_grid((block_size*head_dim+BLOCK_SIZE)/BLOCK_SIZE); // create the grid dim
@@ -112,7 +112,6 @@ void self_attention(
     cudaMemcpy(QK_h, attn_scores, block_size * block_size * sizeof(float), cudaMemcpyDeviceToHost);
     loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/qk_dump.txt";
     dumpMatrix(QK_h, block_size, block_size, loc);
-
 
     // softmax + attention scaling
 

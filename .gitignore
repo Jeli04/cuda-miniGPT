@@ -5,3 +5,7 @@ extern/
 # executables 
 cublas_gemm
 test
+transformer_block
+
+# folders 
+dumps/
