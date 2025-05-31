@@ -40,7 +40,7 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
         int B_col = B_t ? tile_idx * TILE_SIZE + threadIdx.y : col; 
         int B_row = B_t ? col : tile_idx * TILE_SIZE + threadIdx.y;
         if (B_row < (B_t ? n : k) && B_col < (B_t ? k : n)){
-            Bs[threadIdx.y][threadIdx.x] = B[B_row * B_stride + B_col];  // * n here since B is column major
+            Bs[threadIdx.y][threadIdx.x] = B[B_row * B_stride + B_col];  // * stide (n or k) here since B is column major
         }
         else{
             Bs[threadIdx.y][threadIdx.x] = 0.0f;
