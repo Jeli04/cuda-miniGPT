@@ -3,6 +3,7 @@
 #include "tools.cpp"
 
 #define TILE_SIZE 16
+#pragma once
 
 // https://youtu.be/IpHjDoW4ffw?si=oVyTlxgyjhpEv39F
 
@@ -81,7 +82,7 @@ void softmax(
   softmax_kernel<<<grid, block, BLOCK_SIZE * sizeof(float)>>>(input, output, rows, cols);
 }
 
-
+/*
 int main(){
   const int d_model = 128; 
   const int n_heads = 8;
@@ -118,3 +119,4 @@ int main(){
 
   return 0;
 }
+*/

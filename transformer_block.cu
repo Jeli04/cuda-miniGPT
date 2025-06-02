@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "sgemm.cu"
+#include "softmax.cu"
 #include "tools.cpp"
 
 #define TILE_SIZE 16
@@ -12,6 +13,15 @@ __global__ void splitQKV(const float* QKV, float* Q, float* K, float* V, int blo
         Q[idx] = QKV[row * (3 * head_dim) + col];
         K[idx] = QKV[row * (3 * head_dim) + (head_dim) + col];
         V[idx] = QKV[row * (3 * head_dim) + (2 * head_dim) + col];
+    }
+}
+
+// good coalesced explanation 
+// https://stackoverflow.com/questions/5041328/in-cuda-what-is-memory-coalescing-and-how-is-it-achieved
+__global__ void matrixMultiply(float* input, float factor, int N){
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < N) {
+        input[idx] *= factor;
     }
 }
 
@@ -98,8 +108,8 @@ void self_attention(
     splitQKV<<<dim_grid, dim_block>>>(QKV_d, Q_d, K_d, V_d, block_size, head_dim);
 
     float* K_h = (float*) malloc(block_size * head_dim * sizeof(float));
-    cudaMemcpy(K_h, Q_d, block_size * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/q_dump.txt";
+    cudaMemcpy(K_h, V_d, block_size * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/v_dump.txt";
     dumpMatrix(K_h, block_size, head_dim, loc);
 
 
@@ -108,14 +118,18 @@ void self_attention(
     cudaMalloc(&attn_scores, sizeof(float)*block_size*block_size);
     basicSgemm(block_size, block_size, head_dim, false, true, Q_d, K_d, attn_scores);
 
-    float* QK_h = (float*) malloc(block_size * block_size * sizeof(float));
-    cudaMemcpy(QK_h, attn_scores, block_size * block_size * sizeof(float), cudaMemcpyDeviceToHost);
-    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/qk_dump.txt";
-    dumpMatrix(QK_h, block_size, block_size, loc);
+    // attention scaling + softmax
+    float scale = 1.0f / sqrtf((float)head_dim);
+    matrixMultiply<<<(block_size*block_size+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(attn_scores, scale, block_size*block_size);
+    softmax(attn_scores, attn_scores, block_size, block_size);
+    
+    // multply by values 
+    basicSgemm(block_size, head_dim, block_size, false, false, attn_scores, V_d, output_d);
 
-    // softmax + attention scaling
-
-    // multply values 
+    float* output_h = (float*) malloc(block_size * head_dim * sizeof(float));
+    cudaMemcpy(output_h, output_d, block_size * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/output_dump.txt";
+    dumpMatrix(output_h, block_size, head_dim, loc);
 
 
     // dealloc

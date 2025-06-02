@@ -2,6 +2,8 @@
 #include <iostream>
 
 #define TILE_SIZE 16
+#pragma once
+
 
 __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A, const float *B, float* C) {
 

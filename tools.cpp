@@ -4,6 +4,8 @@
 #include <string>
 #include <iostream>
 
+#pragma once
+
 float* loadMatrix(int rows, int cols, std::string& source){
     float* data = new float[rows * cols]; // or float data[rows * cols];
   
