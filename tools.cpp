@@ -35,6 +35,37 @@ float* loadMatrix(int rows, int cols, std::string& source){
     return data;
 }
 
+void loadQKVCombined(
+    const std::string& source,
+    float* dst,
+    int rows, 
+    int cols
+){
+    // This function loads the pretrained QKV weights from the disk on host 
+    // and combines them into a single matrix for each head.
+    // This is a host function, so it will not be run on the device.
+
+    std::ifstream infile(source);
+    if (!infile) {
+        std::cerr << "Could not open file: " << source << "\n";
+        exit(1);
+    }
+  
+    std::string line;
+    int row = 0;
+    while (std::getline(infile, line) && row < rows) {
+        if (line.empty()) continue;
+        std::istringstream iss(line);
+        std::string val;
+        int col = 0;
+        while (iss >> val && col < cols) {
+            dst[row * cols + col] = std::stof(val);
+            ++col;
+        }
+        ++row;
+    }
+}
+
 void dumpMatrix(float* matrix, int rows, int cols, const std::string& destination) {
     std::ofstream outfile(destination);
     if (!outfile.is_open()) {

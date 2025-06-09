@@ -40,45 +40,6 @@ __global__ void combineQKV(
     QKV_w[(i + 2 * head_dim) * d_model + j] = v_w[i * d_model + j];
 }
 
-__global__ void combineHeadWeightsKernel(
-    const float** head_weights,  // [H] (array of device pointers, itself on device)
-    int H,
-    int head_dim,
-    int hidden_dim,
-    float* out                   // [H * head_dim * hidden_dim]
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = H * head_dim * hidden_dim;
-    if (idx >= total) return;
-
-    // Decode flat idx into (head, row, col)
-    int col = idx % hidden_dim;
-    int tmp = idx / hidden_dim;
-    int row = tmp % head_dim;
-    int head = tmp / head_dim;
-
-    // Pointer to this head's weight block
-    const float* src = head_weights[head];
-    int src_idx = row * hidden_dim + col;
-
-    out[idx] = src[src_idx];
-}
-
-void combineHeadWeightsHost(
-    const std::vector<const float*>& head_weights,
-    int H,
-    int head_dim,
-    int hidden_dim,
-    float* out
-) {
-    size_t per_head_bytes = size_t(head_dim) * hidden_dim * sizeof(float);
-    for (int h = 0; h < H; ++h) {
-        // destination offset: h*head_dim rows of hidden_dim columns
-        float* dst = out + size_t(h) * head_dim * hidden_dim;
-        // copy that head's entire [head_dim × hidden_dim] block
-        std::memcpy(dst, head_weights[h], per_head_bytes);
-    }
-}
 
 // good coalesced explanation 
 // https://stackoverflow.com/questions/5041328/in-cuda-what-is-memory-coalescing-and-how-is-it-achieved
@@ -107,10 +68,10 @@ void multi_head_attention(
     cudaMalloc(&input_d, sizeof(float)* block_size*d_model);
     cudaMemcpy(input_d, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
     float* output_d;
-    cudaMalloc(&output_d, sizeof(float)* block_size*d_model);
-    cudaMemcpy(output_d, output, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
+    cudaMalloc(&output_d, sizeof(float)* block_size*num_heads*3*head_dim);
+    cudaMemcpy(output_d, output, sizeof(float)* block_size*num_heads*3*head_dim, cudaMemcpyHostToDevice);
 
-    // get attention scores
+    // get QKV projections
     dim3 dim_block(BLOCK_SIZE, BLOCK_SIZE);
     dim3 dim_grid(num_heads, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE, (num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE); 
     mysgemm<<<dim_grid, dim_block>>>(block_size, num_heads*3*head_dim, d_model, false, true, input_d, q_w, output_d);
@@ -242,109 +203,84 @@ int main(){
     const int head_dim = 16;
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
-    std::string folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
-    // head 0 weights
-    std::string file = "block.0.mha.attn_heads.0.query.weight.txt";
-    std::string source = folder + file;
-    const float* h_Q_w_0 = loadMatrix(head_dim, d_model, source); // load the data
-    const float* d_Q_w_0;
-    cudaMalloc(&d_Q_w_0, sizeof(float)*head_dim*d_model);
-    cudaMemcpy((void*)d_Q_w_0, (void*)h_Q_w_0, sizeof(float)*head_dim*d_model, cudaMemcpyHostToDevice);
+    std::vector<std::string> weights_dump = {
+        "block.0.mha.attn_heads.0.query.weight.txt",
+        "block.0.mha.attn_heads.0.key.weight.txt",
+        "block.0.mha.attn_heads.0.value.weight.txt",
+        "block.0.mha.attn_heads.1.query.weight.txt",
+        "block.0.mha.attn_heads.1.key.weight.txt",
+        "block.0.mha.attn_heads.1.value.weight.txt"
+    };
 
-    file = "block.0.mha.attn_heads.0.key.weight.txt";
-    source = folder + file;
-    const float* h_K_w_0 = loadMatrix(head_dim, d_model, source); // load the data
-    const float* d_K_w_0;
-    cudaMalloc(&d_K_w_0, sizeof(float)*head_dim*d_model);
-    cudaMemcpy((void*)d_K_w_0, (void*)h_K_w_0, sizeof(float)*head_dim*d_model, cudaMemcpyHostToDevice);
+    float* h_W_qkv;
+    cudaHostAlloc(&h_W_qkv, sizeof(float) * d_model * n_heads * head_dim * 3, cudaHostAllocDefault);
 
-    file = "block.0.mha.attn_heads.0.value.weight.txt";
-    source = folder + file;
-    const float* h_V_w_0 = loadMatrix(head_dim, d_model, source); // load the data
-    const float* d_V_w_0;
-    cudaMalloc(&d_V_w_0, sizeof(float)*head_dim*d_model);
-    cudaMemcpy((void*)d_V_w_0, (void*)h_V_w_0, sizeof(float)*head_dim*d_model, cudaMemcpyHostToDevice);
+    float* h_Q_w = h_W_qkv;
+    float* h_K_w = h_W_qkv + head_dim *  n_heads * d_model;
+    float* h_V_w = h_W_qkv + 2 * head_dim * n_heads * d_model;
 
-    float* QKV_d_0;
-    cudaMalloc(&QKV_d_0, sizeof(float)* head_dim * 3 * d_model);
+    // load the QKV weights
+    std::string file, source;
+    for(int i = 0; i < n_heads; i++) {
+        file = weights_dump[3*i + 0]; // query weight
+        source = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/" + file;
+        float* dst_q = h_Q_w + i * head_dim * d_model; // destination for query weight
+        loadQKVCombined(
+            source,
+            dst_q,
+            head_dim, 
+            d_model
+        );
+        printf("%d\n", i * head_dim * d_model);
 
-    dim3 dim_block(BLOCK_SIZE); // create the block dim 
-    dim3 dim_grid((3*head_dim*d_model+BLOCK_SIZE)/BLOCK_SIZE); // create the grid dim
-    combineQKV<<<dim_grid, dim_block>>>(
-        d_Q_w_0, d_K_w_0, d_V_w_0, QKV_d_0,
-        d_model, head_dim
+        file = weights_dump[3*i + 1]; // key weight
+        source = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/" + file;
+        float* dst_k = h_K_w + i * head_dim * d_model; // destination for key weight
+        loadQKVCombined(
+            source,
+            dst_k,
+            head_dim, 
+            d_model
+        );
+        printf("%d\n", i * head_dim * d_model);
+
+        file = weights_dump[3*i + 2]; // value weight
+        source = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/" + file;
+        float* dst_v = h_V_w + i * head_dim * d_model; // destination for value weight
+        loadQKVCombined(
+            source,
+            dst_v,
+            head_dim, 
+            d_model
+        );
+    }
+
+    dumpMatrix(h_W_qkv, n_heads * 3 * head_dim, d_model, "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/combined_qkv.txt");
+
+    // move the weights to device
+    float* d_W_qkv;
+    cudaMalloc(&d_W_qkv, sizeof(float) * d_model * n_heads * head_dim * 3);
+    cudaMemcpy(d_W_qkv, h_W_qkv, sizeof(float) * d_model * n_heads * head_dim * 3, cudaMemcpyHostToDevice);
+
+    // setup input and output
+    float* input = (float*) malloc(sizeof(float) * block_size * d_model);
+    for(int i = 0; i < block_size * d_model; i++) input[i] = 1.0f; // fill with ones
+    float* output = (float*) malloc(sizeof(float) * block_size * 3 * n_heads * head_dim);
+    for(int i = 0; i < block_size * 3 * n_heads * head_dim; i++) output[i] = 1.0f; // fill with ones
+
+    // launch mha
+    multi_head_attention(
+        block_size,
+        n_heads,
+        d_model,
+        head_dim,
+        d_W_qkv, // QKV weights
+        d_W_qkv, // QKV weights
+        d_W_qkv, // QKV weights
+        input,   // input
+        output   // output
     );
-    cudaDeviceSynchronize();
 
-    float* QKV_h_0 = (float*) malloc(sizeof(float) * 3 * head_dim * d_model);
-    cudaMemcpy(QKV_h_0, QKV_d_0, sizeof(float) * 3 * head_dim * d_model, cudaMemcpyDeviceToHost);
-    std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/combined_qkv_head0.txt";
-    dumpMatrix(QKV_h_0, 3*head_dim, d_model, loc);
-
-
-    // head 1 weights 
-    file = "block.0.mha.attn_heads.1.query.weight.txt";
-    source = folder + file;
-    const float* h_Q_w_1 = loadMatrix(head_dim, d_model, source); // load the data
-    const float* d_Q_w_1;
-    cudaMalloc(&d_Q_w_1, sizeof(float)*head_dim*d_model);
-    cudaMemcpy((void*)d_Q_w_1, (void*)h_Q_w_1, sizeof(float)*head_dim*d_model, cudaMemcpyHostToDevice);
-
-    file = "block.0.mha.attn_heads.1.key.weight.txt";
-    source = folder + file;
-    const float* h_K_w_1 = loadMatrix(head_dim, d_model, source); // load the data
-    const float* d_K_w_1;
-    cudaMalloc(&d_K_w_1, sizeof(float)*head_dim*d_model);
-    cudaMemcpy((void*)d_K_w_1, (void*)h_K_w_1, sizeof(float)*head_dim*d_model, cudaMemcpyHostToDevice);
-
-    file = "block.0.mha.attn_heads.1.value.weight.txt";
-    source = folder + file;
-    const float* h_V_w_1 = loadMatrix(head_dim, d_model, source); // load the data
-    const float* d_V_w_1;
-    cudaMalloc(&d_V_w_1, sizeof(float)*head_dim*d_model);
-    cudaMemcpy((void*)d_V_w_1, (void*)h_V_w_1, sizeof(float)*head_dim*d_model, cudaMemcpyHostToDevice);
-
-    float* QKV_d_1;
-    cudaMalloc(&QKV_d_1, sizeof(float) * head_dim * 3 * d_model);
-
-    combineQKV<<<dim_grid, dim_block>>>(
-        d_Q_w_1, d_K_w_1, d_V_w_1, QKV_d_1,
-        d_model, head_dim
-    );
-    cudaDeviceSynchronize();
-
-    float* QKV_h_1 = (float*) malloc(sizeof(float) * 3 * head_dim * d_model);
-    cudaMemcpy(QKV_h_1, QKV_d_1, sizeof(float) * 3 * head_dim * d_model, cudaMemcpyDeviceToHost);
-    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/combined_qkv_head1.txt";
-    dumpMatrix(QKV_h_1, 3*head_dim, d_model, loc);
-
-
-    float* h_head_weights[n_heads];
-    h_head_weights[0] = QKV_d_0;
-    h_head_weights[1] = QKV_d_1;
-    const float** d_head_weights;
-    cudaMalloc(&d_head_weights, n_heads * sizeof(float*));
-    cudaMemcpy(d_head_weights, h_head_weights, n_heads * sizeof(float*), cudaMemcpyHostToDevice);
-
-    // Output allocation
-    float* d_QKV_combined;
-    cudaMalloc(&d_QKV_combined, n_heads * 3 * head_dim * d_model * sizeof(float));
-
-    // reset the grid
-    dim_grid = dim3((n_heads * 3 * head_dim * d_model + BLOCK_SIZE - 1) / BLOCK_SIZE);
-
-    // Launch
-    combineHeadWeightsKernel<<<dim_grid, dim_block>>>(d_head_weights, n_heads, 3*head_dim, d_model, d_QKV_combined);
-
-    float* h_QKV_combined = (float*) malloc(sizeof(float) * n_heads * 3 * head_dim * d_model);
-    cudaMemcpy(h_QKV_combined, d_QKV_combined, sizeof(float) * n_heads * 3 * head_dim * d_model, cudaMemcpyDeviceToHost);
-    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/combined_qkv.txt";
-    dumpMatrix(h_QKV_combined, n_heads*3*head_dim, d_model, loc);
-
-    float* input = (float*) malloc(sizeof(float)*block_size*d_model);
-    for(int i = 0; i < block_size*d_model; i++) input[i] = 1.0f;
-    float* output = (float*) malloc(sizeof(float)*block_size*n_heads*3*head_dim);
-    for(int i = 0; i < block_size*n_heads*3*head_dim; i++) input[i] = 1.0f;
 
     // self_attention(
     //     block_size,
@@ -356,18 +292,6 @@ int main(){
     //     input,
     //     output
     // );
-
-    multi_head_attention(
-        block_size,
-        n_heads,
-        d_model,
-        head_dim,
-        d_QKV_combined, 
-        d_QKV_combined, 
-        d_QKV_combined, 
-        input,
-        output
-    );
 
     return 0;
 }
