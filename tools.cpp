@@ -32,7 +32,6 @@ float* loadMatrix(int rows, int cols, std::string& source){
     for (int i = 0; i < std::min(5, rows * cols); ++i)
         std::cout << data[i] << " ";
     std::cout << std::endl;
-  
     return data;
 }
 
