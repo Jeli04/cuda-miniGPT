@@ -23,8 +23,29 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
     __shared__ float As[TILE_SIZE][TILE_SIZE]; // shared memory for A
     __shared__ float Bs[TILE_SIZE][TILE_SIZE]; // shared memory for B
 
-    int row = blockIdx.y*blockDim.y + threadIdx.y; 
-    int col = blockIdx.x*blockDim.x + threadIdx.x; 
+    int row, col;
+    const float *A_ptr;
+    const float *B_ptr;
+    float *C_ptr;
+
+    // if we have a 3D grid, we can use the z dimension to handle multiple matrices
+    if (gridDim.z > 1) {
+        row = blockIdx.y * blockDim.y + threadIdx.y;   // row tile
+        col = blockIdx.z * blockDim.x + threadIdx.x;   // col tile
+        
+        // x here is the first dimension of the grid 
+        A_ptr = A + blockIdx.x * m * k; // pointer to the A matrix for this block
+        B_ptr = B + blockIdx.x * k * n; // pointer to the B matrix for this block
+        C_ptr = C + blockIdx.x * m * n; // pointer to the C matrix for this block
+    }
+    else {
+        row = blockIdx.y * blockDim.y + threadIdx.y; 
+        col = blockIdx.x * blockDim.x + threadIdx.x; 
+
+        A_ptr = A;
+        B_ptr = B;
+        C_ptr = C;
+    }
 
     float Cvalue = 0.0f;
     // iterate across the tiles 
@@ -32,7 +53,7 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
         int A_row = A_t ? tile_idx * TILE_SIZE + threadIdx.x : row;
         int A_col = A_t ? row : tile_idx * TILE_SIZE + threadIdx.x;
         if (A_row < (A_t ? k : m) && A_col < (A_t ? m : k)){
-            As[threadIdx.y][threadIdx.x] = A[(A_row * k) + A_col];
+            As[threadIdx.y][threadIdx.x] = A_ptr[(A_row * k) + A_col];
         }
         else{
             As[threadIdx.y][threadIdx.x] = 0.0f;
@@ -42,7 +63,7 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
         int B_col = B_t ? tile_idx * TILE_SIZE + threadIdx.y : col; 
         int B_row = B_t ? col : tile_idx * TILE_SIZE + threadIdx.y;
         if (B_row < (B_t ? n : k) && B_col < (B_t ? k : n)){
-            Bs[threadIdx.y][threadIdx.x] = B[B_row * B_stride + B_col];  // * stide (n or k) here since B is column major
+            Bs[threadIdx.y][threadIdx.x] = B_ptr[B_row * B_stride + B_col];  // * stide (n or k) here since B is column major
         }
         else{
             Bs[threadIdx.y][threadIdx.x] = 0.0f;
@@ -61,7 +82,7 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
     }
 
     if (row < m && col < n){
-        C[row*n + col] = Cvalue;
+        C_ptr[row*n + col] = Cvalue;
     }
     /*************************************************************************/
 }
