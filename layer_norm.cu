@@ -6,7 +6,7 @@
 #include <sstream>
 #include <string>
 #include <iostream>
-#include "tools.cpp"
+#include "tools.cu"
 
 
 // __inline__ __device__ float warpReduceSum(float val) {
