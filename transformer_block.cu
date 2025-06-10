@@ -5,7 +5,15 @@
 #include <vector>
 #include <cstring>
 
-#define TILE_SIZE 16
+#define TILE_SIZE 16\
+
+#define CHECK_CUDA(msg) \
+  { cudaError_t err = cudaGetLastError(); \
+    if (err != cudaSuccess) { \
+      printf("CUDA ERROR after %s: %s\n", msg, cudaGetErrorString(err)); \
+      exit(1); \
+    } \
+  }
 
 __global__ void splitQKV(const float* QKV, float* Q, float* K, float* V, int block_size, int head_dim) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -64,7 +72,8 @@ void multi_head_attention(
 
     // get QKV projections
     dim3 dim_block(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dim_grid(num_heads, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE, (num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE); 
+    // dim3 dim_grid(num_heads, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE, (num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE); 
+    dim3 dim_grid((num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE); 
     mysgemm<<<dim_grid, dim_block>>>(block_size, num_heads*3*head_dim, d_model, false, true, d_input, qkv_w, d_output);
     cudaDeviceSynchronize();
 
@@ -97,10 +106,10 @@ void multi_head_attention(
     basicSgemm(block_size, num_heads*head_dim, block_size, false, false, attn_scores, d_V, d_output);
     cudaDeviceSynchronize();
 
-    float* output_h = (float*) malloc(block_size * 3 * num_heads * head_dim * sizeof(float));
-    cudaMemcpy(output_h, d_output, block_size * 3 * num_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    float* output_h = (float*) malloc(block_size *  num_heads * head_dim * sizeof(float));
+    cudaMemcpy(output_h, d_output, block_size *  num_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
-    dumpMatrix(output_h, block_size, 3 * num_heads * head_dim, loc);
+    dumpMatrix(output_h, block_size, num_heads * head_dim, loc);
 
     // dealloc non static values
     // cudaFree(d_Q);
@@ -115,7 +124,7 @@ int main(){
     const int n_heads = 8;
     const int block_size = 64;
     const int head_dim = 16;
-    const int n_blocks = 4;
+    const int n_blocks = 6;
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
     // load the weights
@@ -146,7 +155,18 @@ int main(){
     cudaMalloc(&d_output, sizeof(float)* block_size*n_heads*3*head_dim);
     cudaMemcpy(d_output, output, sizeof(float)* block_size*n_heads*3*head_dim, cudaMemcpyHostToDevice);
 
-    for(int b = 0; b < n_blocks; b++) {
+    for(int b = 0; b < n_blocks; b++) {\
+        // if(b == 3){
+        //     float* h_input = (float*) malloc(sizeof(float) *  n_heads*3*head_dim*d_model);
+        //     cudaMemcpy(h_input, qkv_weights[b], sizeof(float) * n_heads*3*head_dim*d_model, cudaMemcpyDeviceToHost);
+        //     printMatrix(h_input, n_heads*3*head_dim, d_model);
+
+        //     float* output_h = (float*) malloc(n_heads*3*head_dim*d_model * sizeof(float));
+        //     cudaMemcpy(output_h, qkv_weights[b], n_heads*3*head_dim*d_model* sizeof(float), cudaMemcpyDeviceToHost);
+        //     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
+        //     dumpMatrix(output_h, n_heads*3*head_dim, d_model, loc);
+        // }
+
         // launch mha
         multi_head_attention(
             block_size,
@@ -157,17 +177,6 @@ int main(){
             d_input, // input
             d_output // output
         );
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            printf("CUDA error after block %d: %s\n", b, cudaGetErrorString(err));
-            exit(1);
-        }
-        cudaDeviceSynchronize();
-        err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            printf("CUDA sync error after block %d: %s\n", b, cudaGetErrorString(err));
-            exit(1);
-        }
 
         cudaMemcpy(d_input, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToDevice);
         printf("Block %d processed.\n", b);
@@ -176,8 +185,8 @@ int main(){
         // printMatrix(h_input, block_size, n_heads * head_dim);
     }
 
-    // cudaFree(input);
-    // cudaFree(output);
+    cudaFree(d_input);
+    cudaFree(d_output);
 
     return 0;
 }

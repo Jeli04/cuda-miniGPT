@@ -105,7 +105,8 @@ void dumpMatrix(float* matrix, int rows, int cols, const std::string& destinatio
 void printMatrix(float* matrix, int rows, int cols) {
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
-            printf("%.4f ", matrix[r * cols + c]);
+            // printf("%.4f ", matrix[r * cols + c]);
+            printf("Row %d, Col %d: %.4f ", r, c, matrix[r * cols + c]);        
         }
         printf("\n");
     }
@@ -134,9 +135,9 @@ std::vector<float*> load_qkv_weights(
             loadQKVCombined(weights_dump[base + 0], h_Q_w + i * head_dim * d_model, head_dim, d_model);
             loadQKVCombined(weights_dump[base + 1], h_K_w + i * head_dim * d_model, head_dim, d_model);
             loadQKVCombined(weights_dump[base + 2], h_V_w + i * head_dim * d_model, head_dim, d_model);
-            printf("%s\n", weights_dump[base + 0].c_str());
-            printf("%s\n", weights_dump[base + 1].c_str());
-            printf("%s\n", weights_dump[base + 2].c_str());
+            // printf("%s\n", weights_dump[base + 0].c_str());
+            // printf("%s\n", weights_dump[base + 1].c_str());
+            // printf("%s\n", weights_dump[base + 2].c_str());
         }
 
         float* d_W_qkv;
