@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include "sgemm.cu"
-#include "tools.cpp"
+#include "tools.cu"
 
 #define TILE_SIZE 16
 #pragma once

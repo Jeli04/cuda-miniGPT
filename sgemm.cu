@@ -28,24 +28,12 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
     const float *B_ptr;
     float *C_ptr;
 
-    // if we have a 3D grid, we can use the z dimension to handle multiple matrices
-    if (gridDim.z > 1) {
-        row = blockIdx.y * blockDim.y + threadIdx.y;   // row tile
-        col = blockIdx.z * blockDim.x + threadIdx.x;   // col tile
-        
-        // x here is the first dimension of the grid 
-        A_ptr = A + blockIdx.x * m * k; // pointer to the A matrix for this block
-        B_ptr = B + blockIdx.x * k * n; // pointer to the B matrix for this block
-        C_ptr = C + blockIdx.x * m * n; // pointer to the C matrix for this block
-    }
-    else {
-        row = blockIdx.y * blockDim.y + threadIdx.y; 
-        col = blockIdx.x * blockDim.x + threadIdx.x; 
+    row = blockIdx.y * blockDim.y + threadIdx.y; 
+    col = blockIdx.x * blockDim.x + threadIdx.x; 
 
-        A_ptr = A;
-        B_ptr = B;
-        C_ptr = C;
-    }
+    A_ptr = A;
+    B_ptr = B;
+    C_ptr = C;
 
     float Cvalue = 0.0f;
     // iterate across the tiles 
