@@ -64,22 +64,52 @@ void multi_head_attention(
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
     // move input and output 
-    float* input_d;
-    cudaMalloc(&input_d, sizeof(float)* block_size*d_model);
-    cudaMemcpy(input_d, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
-    float* output_d;
-    cudaMalloc(&output_d, sizeof(float)* block_size*num_heads*3*head_dim);
-    cudaMemcpy(output_d, output, sizeof(float)* block_size*num_heads*3*head_dim, cudaMemcpyHostToDevice);
+    float* d_input;
+    cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
+    cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
+    float* d_output;
+    cudaMalloc(&d_output, sizeof(float)* block_size*num_heads*3*head_dim);
+    cudaMemcpy(d_output, output, sizeof(float)* block_size*num_heads*3*head_dim, cudaMemcpyHostToDevice);
 
     // get QKV projections
     dim3 dim_block(BLOCK_SIZE, BLOCK_SIZE);
     dim3 dim_grid(num_heads, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE, (num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE); 
-    mysgemm<<<dim_grid, dim_block>>>(block_size, num_heads*3*head_dim, d_model, false, true, input_d, q_w, output_d);
+    mysgemm<<<dim_grid, dim_block>>>(block_size, num_heads*3*head_dim, d_model, false, true, d_input, q_w, d_output);
 
-    float* output_h = (float*) malloc(block_size * num_heads*3*head_dim * sizeof(float));
-    cudaMemcpy(output_h, output_d, block_size * num_heads*3*head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    // split QKV into Q, K, V
+    float* d_Q;
+    cudaMalloc(&d_Q, sizeof(float)*block_size*num_heads*head_dim); // allocate Q
+    float* d_K;
+    cudaMalloc(&d_K, sizeof(float)*block_size*num_heads*head_dim); // allocate K
+    float* d_V;
+    cudaMalloc(&d_V, sizeof(float)*block_size*num_heads*head_dim); // allovate V 
+    dim_block= dim3(BLOCK_SIZE); // create the block dim 
+    dim_grid=dim3((block_size*3*num_heads*head_dim+BLOCK_SIZE)/BLOCK_SIZE); // create the grid dim
+    splitQKV<<<dim_grid, dim_block>>>(d_output, d_Q, d_K, d_V, block_size, num_heads*head_dim);
+
+    // float* output_h = (float*) malloc(block_size * num_heads*head_dim * sizeof(float));
+    // cudaMemcpy(output_h, d_Q, block_size * num_heads*head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    // std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
+    // dumpMatrix(output_h, block_size, num_heads*head_dim, loc);
+    // printMatrix(output_h, block_size, num_heads*head_dim);
+
+    // Compute attention scores 
+    float* attn_scores;
+    cudaMalloc(&attn_scores, sizeof(float)*block_size*block_size);
+    basicSgemm(block_size, block_size, num_heads*head_dim, false, true, d_Q, d_K, attn_scores);
+
+    // attention scaling + softmax
+    float scale = 1.0f / sqrtf((float)head_dim);
+    matrixMultiplyConstant<<<(block_size*block_size+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(attn_scores, scale, block_size*block_size);
+    softmax(attn_scores, attn_scores, block_size, block_size);
+
+    // multply by values 
+    basicSgemm(block_size, num_heads*head_dim, block_size, false, false, attn_scores, d_V, d_output);
+
+    float* output_h = (float*) malloc(block_size * num_heads*head_dim * sizeof(float));
+    cudaMemcpy(output_h, d_output, block_size * num_heads*head_dim * sizeof(float), cudaMemcpyDeviceToHost);
     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
-    dumpMatrix(output_h, block_size, num_heads*3*head_dim, loc);
+    dumpMatrix(output_h, block_size, num_heads*head_dim, loc);
 }
 
 void self_attention(
@@ -111,12 +141,12 @@ void self_attention(
     // will move the allocation out of this later, allocation will all be done once in the beginning
 
     // move input and output 
-    float* input_d;
-    cudaMalloc(&input_d, sizeof(float)* block_size*d_model);
-    cudaMemcpy(input_d, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
-    float* output_d;
-    cudaMalloc(&output_d, sizeof(float)* block_size*head_dim);
-    cudaMemcpy(output_d, output, sizeof(float)* block_size*head_dim, cudaMemcpyHostToDevice);
+    float* d_input;
+    cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
+    cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
+    float* d_output;
+    cudaMalloc(&d_output, sizeof(float)* block_size*head_dim);
+    cudaMemcpy(d_output, output, sizeof(float)* block_size*head_dim, cudaMemcpyHostToDevice);
 
     // allocate combined qkv  
     float* QKV_d;
@@ -147,7 +177,7 @@ void self_attention(
     cudaMemcpy(QKV_w_d, QKV_w, sizeof(float)* d_model*head_dim*3, cudaMemcpyHostToDevice);
 
     // get QKV values
-    basicSgemm(block_size, head_dim*3, d_model, false, false, input_d, QKV_w_d, QKV_d);
+    basicSgemm(block_size, head_dim*3, d_model, false, false, d_input, QKV_w_d, QKV_d);
 
     float* QKV_h = (float*) malloc(block_size * 3 * head_dim * sizeof(float));
     cudaMemcpy(QKV_h, QKV_d, block_size * 3 * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
@@ -181,11 +211,11 @@ void self_attention(
     softmax(attn_scores, attn_scores, block_size, block_size);
     
     // multply by values 
-    basicSgemm(block_size, head_dim, block_size, false, false, attn_scores, V_d, output_d);
+    basicSgemm(block_size, head_dim, block_size, false, false, attn_scores, V_d, d_output);
 
     float* output_h = (float*) malloc(block_size * head_dim * sizeof(float));
-    cudaMemcpy(output_h, output_d, block_size * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/output_dump.txt";
+    cudaMemcpy(output_h, d_output, block_size * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/d_outputump.txt";
     dumpMatrix(output_h, block_size, head_dim, loc);
 
 
@@ -264,7 +294,10 @@ int main(){
 
     // setup input and output
     float* input = (float*) malloc(sizeof(float) * block_size * d_model);
-    for(int i = 0; i < block_size * d_model; i++) input[i] = 1.0f; // fill with ones
+    for(int i = 0; i < block_size * d_model; i++){
+        if(i < 10) input[i] = 10.0f; // fill first 10 with tens
+        else input[i] = 1.0f; // fill with ones
+    }
     float* output = (float*) malloc(sizeof(float) * block_size * 3 * n_heads * head_dim);
     for(int i = 0; i < block_size * 3 * n_heads * head_dim; i++) output[i] = 1.0f; // fill with ones
 
