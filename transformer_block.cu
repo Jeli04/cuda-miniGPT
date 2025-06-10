@@ -4,6 +4,7 @@
 #include "tools.cpp"
 #include <vector>
 #include <cstring>
+
 #define TILE_SIZE 16
 
 __global__ void splitQKV(const float* QKV, float* Q, float* K, float* V, int block_size, int head_dim) {
@@ -113,6 +114,8 @@ void multi_head_attention(
     cudaFree(d_V);
     cudaFree(attn_scores);
 }
+
+
 
 int main(){
     const int d_model = 128; 
