@@ -110,54 +110,54 @@ __global__ void layer_norm(
     }
 }
 
-int main(){
-    int d_model = 128;
-    int head_dim = 16;
+// int main(){
+//     int d_model = 128;
+//     int head_dim = 16;
 
-    std::string folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
-    // head 0 weights
-    std::string file = "block.0.mha.attn_heads.0.query.weight.txt";
-    std::string source = folder + file;
-    const float* h_Q_w_0 = loadMatrix(head_dim, d_model, source); // load the data
-    float* d_Q_w_0;
-    cudaMalloc(&d_Q_w_0, head_dim * d_model * sizeof(float));
-    cudaMemcpy(d_Q_w_0, h_Q_w_0, sizeof(float) * head_dim * d_model, cudaMemcpyHostToDevice);
+//     std::string folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
+//     // head 0 weights
+//     std::string file = "block.0.mha.attn_heads.0.query.weight.txt";
+//     std::string source = folder + file;
+//     const float* h_Q_w_0 = loadMatrix(head_dim, d_model, source); // load the data
+//     float* d_Q_w_0;
+//     cudaMalloc(&d_Q_w_0, head_dim * d_model * sizeof(float));
+//     cudaMemcpy(d_Q_w_0, h_Q_w_0, sizeof(float) * head_dim * d_model, cudaMemcpyHostToDevice);
 
-    // gamma and beta
-    file = "block.0.ln1.weight.txt";
-    source = folder + file;
-    float* h_gamma = loadMatrix(d_model, 1, source); // load the data
-    float* d_gamma;
-    cudaMalloc(&d_gamma, d_model * sizeof(float));
-    cudaMemcpy(d_gamma, h_gamma, sizeof(float) * d_model, cudaMemcpyHostToDevice);
-    // printMatrix(h_gamma, d_model, 1);
+//     // gamma and beta
+//     file = "block.0.ln1.weight.txt";
+//     source = folder + file;
+//     float* h_gamma = loadMatrix(d_model, 1, source); // load the data
+//     float* d_gamma;
+//     cudaMalloc(&d_gamma, d_model * sizeof(float));
+//     cudaMemcpy(d_gamma, h_gamma, sizeof(float) * d_model, cudaMemcpyHostToDevice);
+//     // printMatrix(h_gamma, d_model, 1);
 
-    file = "block.0.ln1.bias.txt";
-    source = folder + file;
-    float* h_beta = loadMatrix(d_model, 1, source); // load the data
-    float* d_beta;
-    cudaMalloc(&d_beta, d_model * sizeof(float));
-    cudaMemcpy(d_beta, h_beta, sizeof(float) * d_model, cudaMemcpyHostToDevice);
+//     file = "block.0.ln1.bias.txt";
+//     source = folder + file;
+//     float* h_beta = loadMatrix(d_model, 1, source); // load the data
+//     float* d_beta;
+//     cudaMalloc(&d_beta, d_model * sizeof(float));
+//     cudaMemcpy(d_beta, h_beta, sizeof(float) * d_model, cudaMemcpyHostToDevice);
 
-    float* d_output;
-    cudaMalloc(&d_output, head_dim * d_model * sizeof(float));
-    dim3 grid(head_dim);       
-    dim3 block(d_model);             
-    size_t shmem = d_model * sizeof(float);  
-    layer_norm<<<grid, block, shmem>>>(
-        d_Q_w_0,
-        d_output,
-        d_gamma,
-        d_beta,
-        head_dim,
-        d_model
-    );
-    cudaDeviceSynchronize();
+//     float* d_output;
+//     cudaMalloc(&d_output, head_dim * d_model * sizeof(float));
+//     dim3 grid(head_dim);       
+//     dim3 block(d_model);             
+//     size_t shmem = d_model * sizeof(float);  
+//     layer_norm<<<grid, block, shmem>>>(
+//         d_Q_w_0,
+//         d_output,
+//         d_gamma,
+//         d_beta,
+//         head_dim,
+//         d_model
+//     );
+//     cudaDeviceSynchronize();
 
-    std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
-    float* h_output = (float*)malloc(head_dim * d_model * sizeof(float));
-    cudaMemcpy(h_output, d_output,
-               head_dim * d_model * sizeof(float),
-               cudaMemcpyDeviceToHost);
-    dumpMatrix(h_output, head_dim, d_model, loc);
-}
+//     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
+//     float* h_output = (float*)malloc(head_dim * d_model * sizeof(float));
+//     cudaMemcpy(h_output, d_output,
+//                head_dim * d_model * sizeof(float),
+//                cudaMemcpyDeviceToHost);
+//     dumpMatrix(h_output, head_dim, d_model, loc);
+// }

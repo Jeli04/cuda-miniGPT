@@ -4,6 +4,7 @@
 #include "tools.cu"
 #include <vector>
 #include <cstring>
+#include "layer_norm.cu"
 
 #define TILE_SIZE 16\
 
@@ -57,6 +58,15 @@ __global__ void matrixMultiplyConstant(float* input, float factor, int N){
     if (idx < N) {
         input[idx] *= factor;
     }
+}
+
+__global__ void add_residual(const float* a, const float* b, float* out, int rows, int cols) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i < rows && j < cols) {
+        // printf("i: %d, j: %d\n", i, j);
+        out[i * cols + j] = a[i * cols + j] + b[i * cols + j];
+    } 
 }
 
 void multi_head_attention(
@@ -137,6 +147,22 @@ int main(){
         head_dim,
         qkv_dump_path
     );
+    std::vector<std::string> ln1_dump_path = get_layernorm_paths(n_blocks, 1, folder);
+    std::vector<float*> ln1_weights = load_layernorm_weights(
+        n_blocks, 
+        n_heads, 
+        d_model, 
+        head_dim,
+        ln1_dump_path
+    );
+    std::vector<std::string> ln2_dump_path = get_layernorm_paths(n_blocks, 2, folder);
+    std::vector<float*> ln2_weights = load_layernorm_weights(
+        n_blocks, 
+        n_heads, 
+        d_model, 
+        head_dim,
+        ln2_dump_path
+    );
 
     // setup input and output
     float* input = (float*) malloc(sizeof(float) * block_size * d_model);
@@ -151,22 +177,14 @@ int main(){
     float* d_input;
     cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
     cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
+    float* d_input_copy; // for residual layer later
+    cudaMalloc(&d_input_copy, sizeof(float)* block_size*d_model);
+    cudaMemcpy(d_input_copy, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
     float* d_output;
     cudaMalloc(&d_output, sizeof(float)* block_size*n_heads*3*head_dim);
     cudaMemcpy(d_output, output, sizeof(float)* block_size*n_heads*3*head_dim, cudaMemcpyHostToDevice);
 
-    for(int b = 0; b < n_blocks; b++) {\
-        // if(b == 3){
-        //     float* h_input = (float*) malloc(sizeof(float) *  n_heads*3*head_dim*d_model);
-        //     cudaMemcpy(h_input, qkv_weights[b], sizeof(float) * n_heads*3*head_dim*d_model, cudaMemcpyDeviceToHost);
-        //     printMatrix(h_input, n_heads*3*head_dim, d_model);
-
-        //     float* output_h = (float*) malloc(n_heads*3*head_dim*d_model * sizeof(float));
-        //     cudaMemcpy(output_h, qkv_weights[b], n_heads*3*head_dim*d_model* sizeof(float), cudaMemcpyDeviceToHost);
-        //     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
-        //     dumpMatrix(output_h, n_heads*3*head_dim, d_model, loc);
-        // }
-
+    for(int b = 0; b < n_blocks; b++) {
         // launch mha
         multi_head_attention(
             block_size,
@@ -177,13 +195,37 @@ int main(){
             d_input, // input
             d_output // output
         );
-
         cudaMemcpy(d_input, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToDevice);
+
+        // residual connection
+        dim3 grid((block_size+BLOCK_SIZE-1)/BLOCK_SIZE,  (n_heads * head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+        add_residual<<<grid, block>>>(d_input_copy, d_output, d_output, block_size, n_heads * head_dim);
+        cudaDeviceSynchronize();
+
+        // layer norm     
+        size_t shmem = d_model * sizeof(float);  
+        layer_norm<<<grid, block, shmem>>>(
+            d_output,
+            d_output,
+            ln2_weights[b * 2], // gamma
+            ln2_weights[b * 2 + 1], // beta
+            head_dim,
+            d_model
+        );
+        cudaDeviceSynchronize();
+
+
         printf("Block %d processed.\n", b);
-        // float* h_input = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
-        // cudaMemcpy(h_input, d_input, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToHost);
-        // printMatrix(h_input, block_size, n_heads * head_dim);
     }
+
+
+
+    float* h_input = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
+    cudaMemcpy(h_input, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToHost);
+    // printMatrix(h_input, block_size, n_heads * head_dim);
+    std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
+    dumpMatrix(h_input, block_size, n_heads * head_dim, loc);
 
     cudaFree(d_input);
     cudaFree(d_output);
