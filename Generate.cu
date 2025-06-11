@@ -120,23 +120,11 @@ char** load_vocab_json(const char* filename, int* vocab_size) {
             vocab[token_id] = token_value;
         }
         
-        // Debug first 10 tokens
-        if (token_id < 10) {
-            if (token_value[0] == ' ') {
-                printf("Vocab[%d]: 'SPACE'\n", token_id);
-            } else if (token_value[0] == '\n') {
-                printf("Vocab[%d]: '\\n'\n", token_id);
-            } else {
-                printf("Vocab[%d]: '%s'\n", token_id, token_value);
-            }
-        }
-        
         pos = value_end + 1;
     }
     
     *vocab_size = 84;
     free(json_content);
-    printf("Loaded %d tokens from JSON\n", 84);
     return vocab;
 }
 
@@ -160,8 +148,6 @@ __global__ void multinomial_sample_kernel(
 
     curandState* state = &states[idx];
     float coin = curand_uniform(state);
-    
-    printf("CUDA random: %.8f\n", coin);
 
     float total_prob = 0.0f;
     float max_prob = 0.0f;
@@ -200,8 +186,6 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
     int* token_ids = (int*)malloc(text_len * sizeof(int));
     int valid_tokens = 0;
     
-    printf("\nConverting '%s' to tokens:\n", text);
-    
     for (int i = 0; i < text_len; i++) {
         char target_char = text[i];
         int token_id = -1;
@@ -216,17 +200,11 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
         
         if (token_id >= 0) {
             token_ids[valid_tokens] = token_id;
-            if (target_char == ' ') {
-                printf("'SPACE' -> token %d\n", token_id);
-            } else {
-                printf("'%c' -> token %d\n", target_char, token_id);
-            }
         } else {
             // Find space token as fallback
             for (int j = 0; j < vocab_size; j++) {
                 if (vocab[j] && strlen(vocab[j]) == 1 && vocab[j][0] == ' ') {
                     token_ids[valid_tokens] = j;
-                    printf("'%c' NOT FOUND -> using token %d (space)\n", target_char, j);
                     break;
                 }
             }
@@ -246,9 +224,6 @@ float* extract_last_token_logits(float* full_logits, int seq_len, int vocab_size
     
     float* last_logits = (float*)malloc(vocab_size * sizeof(float));
     
-    printf("Extracting last token logits from position %d-%d\n", 
-           last_token_start, last_token_start + vocab_size - 1);
-    
     for (int i = 0; i < vocab_size; i++) {
         last_logits[i] = full_logits[last_token_start + i];
     }
@@ -260,7 +235,6 @@ float* extract_last_token_logits(float* full_logits, int seq_len, int vocab_size
 float* load_and_extract_logits_c(const char* filename, int vocab_size) {
     FILE* file = fopen(filename, "r");
     if (!file) {
-        printf("Warning: Cannot load %s\n", filename);
         return NULL;
     }
     
@@ -343,9 +317,6 @@ void generate_tokens_contextual(
         }
     }
     
-    printf("Initial text: '%s'\n", full_text);
-    printf("Generating %d new tokens...\n", max_new_tokens);
-    
     // Generate tokens one by one
     for (int step = 0; step < max_new_tokens; step++) {
         // Load logits for this step
@@ -354,7 +325,6 @@ void generate_tokens_contextual(
         
         float* logits = load_and_extract_logits_c(logits_filename, vocab_size);
         if (!logits) {
-            printf("No logits found for step %d, stopping generation\n", step);
             break;
         }
 
@@ -362,12 +332,9 @@ void generate_tokens_contextual(
         cudaMemcpy(d_logits, logits, vocab_size * sizeof(float), cudaMemcpyHostToDevice);
         softmax(d_logits, d_probs, 1, vocab_size);
 
-        // Debug: show top 5 probabilities for comparison
         float* h_probs = (float*)malloc(vocab_size * sizeof(float));
         cudaMemcpy(h_probs, d_probs, vocab_size * sizeof(float), cudaMemcpyDeviceToHost);
 
-        
-        // Verify probabilities sum to 1.0 BEFORE sampling
         float prob_sum = 0.0f;
         for (int i = 0; i < vocab_size; i++) {
             prob_sum += h_probs[i];
@@ -381,23 +348,7 @@ void generate_tokens_contextual(
         int next_token;
         cudaMemcpy(&next_token, d_selected_token, sizeof(int), cudaMemcpyDeviceToHost);
 
-
-        // Add the actual character/token representation
-        if (next_token >= 0 && next_token < vocab_size && vocab[next_token]) {
-            if (vocab[next_token][0] == ' ') {
-                printf(" -> 'SPACE'\n");
-            } else if (vocab[next_token][0] == '\n') {
-                printf(" -> '\\n'\n");
-            } else {
-                printf(" -> '%s'\n", vocab[next_token]);
-            }
-        } else {
-            printf(" -> INVALID TOKEN\n");
-        }
-
         // Show what the top 3 highest probability tokens were for comparison
-        printf("    Top 3 alternatives: ");
-        // Find top 3 indices (improved algorithm)
         int top_indices[3] = {-1, -1, -1};
         float top_probs[3] = {-1.0f, -1.0f, -1.0f};
         
@@ -430,34 +381,10 @@ void generate_tokens_contextual(
             }
         }
 
-        for (int i = 0; i < 3; i++) {
-            if (top_indices[i] >= 0) {
-                int idx = top_indices[i];
-                printf("[%d:%.4f", idx, h_probs[idx]);
-                if (vocab[idx]) {
-                    if (vocab[idx][0] == ' ') {
-                        printf(":'SPACE']");
-                    } else if (vocab[idx][0] == '\n') {
-                        printf(":'\\n']");
-                    } else {
-                        printf(":'%s']", vocab[idx]);
-                    }
-                } else {
-                    printf(":NULL]");
-                }
-                if (i < 2) printf(" ");
-            }
-        }
-        printf("\n");
-
-        // Show probability sum verification
-        printf("    Prob sum: %.8f (should be ~1.0)\n", prob_sum);
-
         free(h_probs);
         
         // Validate token
         if (next_token < 0 || next_token >= vocab_size) {
-            printf("Invalid token %d generated, stopping\n", next_token);
             break;
         }
 
@@ -509,7 +436,9 @@ int main() {
     // Cleanup
     free(input_tokens);
     for (int i = 0; i < vocab_size; i++) {
-        free(vocab[i]);
+        if (vocab[i]) { // Add check for NULL before freeing
+            free(vocab[i]);
+        }
     }
     free(vocab);
     
