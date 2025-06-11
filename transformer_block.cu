@@ -71,12 +71,31 @@ __global__ void add_residual(const float* a, const float* b, float* out, int row
     } 
 }
 
+__global__ void scatter_head(
+    const float* __restrict__ head_out, 
+    float* __restrict__ concat,
+    int block_size,
+    int num_heads,
+    int head_dim,
+    int head_idx
+){
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = block_size * head_dim;
+    if (tid >= total) return;
+    int row = tid / head_dim;
+    int col = tid % head_dim;
+    // destination column offset = head_idx * head_dim
+    concat[row * (num_heads*head_dim) + head_idx*head_dim + col] = head_out[tid];
+}
+
+
 void multi_head_attention(
     int block_size,
     int num_heads,
     int d_model,
     int head_dim,
     const float* qkv_w, 
+    const float* o_proj_w, 
     float* d_input,
     float* d_output
 ){
@@ -104,6 +123,12 @@ void multi_head_attention(
     splitQKV<<<dim_grid, dim_block>>>(d_qkv_proj, d_Q, d_K, d_V, block_size, num_heads*head_dim);
     cudaDeviceSynchronize();
 
+    float* output_h = (float*) malloc(block_size *  num_heads * head_dim * sizeof(float));
+    cudaMemcpy(output_h, d_Q, block_size *  num_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/q_dump.txt";
+    dumpMatrix(output_h, block_size, num_heads * head_dim, loc);
+
+
     // Compute attention scores 
     float* attn_scores;
     cudaMalloc(&attn_scores, sizeof(float)*block_size*block_size);
@@ -118,8 +143,16 @@ void multi_head_attention(
     softmax(attn_scores, attn_scores, block_size, block_size);
 
     // multply by values 
-    basicSgemm(block_size, num_heads*head_dim, block_size, false, false, attn_scores, d_V, d_output);
+    float* attn_output;
+    cudaMalloc(&attn_output, sizeof(float) * block_size * d_model);
+    basicSgemm(block_size, num_heads*head_dim, block_size, false, false, attn_scores, d_V, attn_output);
     cudaDeviceSynchronize();
+
+    // apply output projection
+    
+    dim_block = dim3(BLOCK_SIZE, BLOCK_SIZE);
+    dim_grid = dim3((d_model + BLOCK_SIZE - 1) / BLOCK_SIZE, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE); 
+    mysgemm<<<dim_grid, dim_block>>>(block_size, d_model, d_model, false, true, attn_output, o_proj_w, d_output);
 
     // float* output_h = (float*) malloc(block_size *  num_heads * head_dim * sizeof(float));
     // cudaMemcpy(output_h, d_output, block_size *  num_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
@@ -139,67 +172,72 @@ int main(){
     const int n_heads = 8;
     const int block_size = 64;
     const int head_dim = 16;
-    const int n_blocks = 6;
+    const int n_blocks = 2;
     int vocab_size = 84;
     int max_seq_len = 64;
-    int seq_len = 16; // "To be or not to be" length
+    int seq_len = 64; // "To be or not to be" length
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
 
-    // Load embedding tables
-    std::string weights_folder = "./weights_dump/";
-    std::string token_file = weights_folder + "token_embedding_table.weight.txt";
-    std::string pos_file = weights_folder + "position_embedding_table.weight.txt";
+    // // Load embedding tables
+    // std::string weights_folder = "./weights_dump/";
+    // std::string token_file = weights_folder + "token_embedding_table.weight.txt";
+    // std::string pos_file = weights_folder + "position_embedding_table.weight.txt";
 
-    float* h_token_table = loadMatrix(vocab_size, d_model, token_file);
-    float* h_pos_table = loadMatrix(max_seq_len, d_model, pos_file);
+    // float* h_token_table = loadMatrix(vocab_size, d_model, token_file);
+    // float* h_pos_table = loadMatrix(max_seq_len, d_model, pos_file);
 
-    printf("Loaded token embedding table: %d x %d\n", vocab_size, d_model);
-    printf("Loaded position embedding table: %d x %d\n", max_seq_len, d_model);
+    // printf("Loaded token embedding table: %d x %d\n", vocab_size, d_model);
+    // printf("Loaded position embedding table: %d x %d\n", max_seq_len, d_model);
 
-    // Allocate device memory
-    float* d_token_table;
-    float* d_pos_table;
-    float* d_input;
+    // // Allocate device memory
+    // float* d_token_table;
+    // float* d_pos_table;
+    // float* d_input;
 
-    cudaMalloc(&d_token_table, vocab_size * d_model * sizeof(float));
-    cudaMalloc(&d_pos_table, max_seq_len * d_model * sizeof(float));
-    cudaMalloc(&d_input, seq_len * d_model * sizeof(float));
+    // cudaMalloc(&d_token_table, vocab_size * d_model * sizeof(float));
+    // cudaMalloc(&d_pos_table, max_seq_len * d_model * sizeof(float));
+    // cudaMalloc(&d_input, seq_len * d_model * sizeof(float));
 
-    // Copy to device
-    cudaMemcpy(d_token_table, h_token_table, vocab_size * d_model * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_pos_table, h_pos_table, max_seq_len * d_model * sizeof(float), cudaMemcpyHostToDevice);
+    // // Copy to device
+    // cudaMemcpy(d_token_table, h_token_table, vocab_size * d_model * sizeof(float), cudaMemcpyHostToDevice);
+    // cudaMemcpy(d_pos_table, h_pos_table, max_seq_len * d_model * sizeof(float), cudaMemcpyHostToDevice);
 
-    int h_tokens[18] = {45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60};
+    // int h_tokens[64] = {
+    //     45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60,
+    //     45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60,
+    //     45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60,
+    //     45, 70, 1, 57, 60, 1, 70, 73, 1, 69
+    // };
 
-    printf("Processing sequence using SGEMM matrix multiplication...\n");
+    // printf("Processing sequence using SGEMM matrix multiplication...\n");
 
-    // Process sequence using sgemm
-    embed_sequence_sgemm(
-        d_input,
-        d_token_table,
-        d_pos_table,
-        h_tokens,
-        seq_len,
-        d_model,
-        vocab_size,
-        max_seq_len
-    );
+    // // Process sequence using sgemm
+    // embed_sequence_sgemm(
+    //     d_input,
+    //     d_token_table,
+    //     d_pos_table,
+    //     h_tokens,
+    //     seq_len,
+    //     d_model,
+    //     vocab_size,
+    //     max_seq_len
+    // );
 
-    // Copy results back
-    float* h_result = (float*)malloc(seq_len * d_model * sizeof(float));
-    cudaMemcpy(h_result, d_input, seq_len * d_model * sizeof(float), cudaMemcpyDeviceToHost);
+    // // Copy results back
+    // float* h_result = (float*)malloc(seq_len * d_model * sizeof(float));
+    // cudaMemcpy(h_result, d_input, seq_len * d_model * sizeof(float), cudaMemcpyDeviceToHost);
 
-    // Show results for first token
-    printf("Sequence embedding (first token, first 8 dims): ");
-    for (int i = 0; i < 8; i++) {
-        printf("%.6f ", h_result[i]);
-    }
-    printf("\n");
+    // // Show results for first token
+    // printf("Sequence embedding (first token, first 8 dims): ");
+    // for (int i = 0; i < 8; i++) {
+    //     printf("%.6f ", h_result[i]);
+    // }
+    // printf("\n");
 
-    // Save results
-    dumpMatrix(h_result, seq_len, d_model, "./positional_embedding_result.txt");
-    printf("Saved positional results to: positional_embedding_result.txt\n");
+    // // Save results
+    // dumpMatrix(h_result, seq_len, d_model, "./positional_embedding_result.txt");
+    // printf("Saved positional results to: positional_embedding_result.txt\n");
 
 
 
@@ -242,6 +280,13 @@ int main(){
         d_model,     
         mha_proj_dump_path
     );
+    std::vector<std::string> lnf_dump_path = get_ln_f_paths(folder);
+    std::vector<float*> lnf_weights = load_ln_f_weights(
+        d_model,     
+        lnf_dump_path
+    );
+    std::vector<std::string> lm_head_paths = get_lm_head_paths(folder);
+    std::vector<float*> lm_head_weights = load_lm_head_weights(vocab_size, d_model, lm_head_paths);
 
     // setup input and output
     float* input = (float*) malloc(sizeof(float) * block_size * d_model);
@@ -253,9 +298,9 @@ int main(){
     for(int i = 0; i < block_size * n_heads * head_dim; i++) output[i] = 2.0f; // fill with ones
 
     // move input and output 
-    // float* d_input;
-    // cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
-    // cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
+    float* d_input;
+    cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
+    cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
     float* d_output;
     cudaMalloc(&d_output, sizeof(float)* block_size*n_heads*head_dim);
     cudaMemcpy(d_output, output, sizeof(float)* block_size*n_heads*head_dim, cudaMemcpyHostToDevice);
@@ -292,6 +337,7 @@ int main(){
             d_model,
             head_dim,
             qkv_weights[b], // QKV weights
+            mha_proj_weights[b], // output projection weights
             d_input, // input
             d_output // output
         );
@@ -352,8 +398,8 @@ int main(){
     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
     dumpMatrix(output_h, block_size, n_heads * head_dim, loc);
 
-    cudaFree(d_input);
-    cudaFree(d_output);
+    // cudaFree(d_input);
+    // cudaFree(d_output);
 
     return 0;
 }

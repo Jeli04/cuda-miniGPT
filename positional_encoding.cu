@@ -64,12 +64,12 @@ void embed_sequence_sgemm(
     add_embeddings<<<grid, block>>>(d_token_embeddings, d_pos_embeddings, d_output, seq_len, d_model);
     
     // Cleanup
-    cudaFree(d_token_onehot);
-    cudaFree(d_pos_onehot);
-    cudaFree(d_token_embeddings);
-    cudaFree(d_pos_embeddings);
-    free(h_token_onehot);
-    free(h_pos_onehot);
+    // cudaFree(d_token_onehot);
+    // cudaFree(d_pos_onehot);
+    // cudaFree(d_token_embeddings);
+    // cudaFree(d_pos_embeddings);
+    // free(h_token_onehot);
+    // free(h_pos_onehot);
 }
 
 
@@ -140,12 +140,12 @@ void test_positional_encoding_sgemm() {
     printf("Saved positional results to: positional_embedding_result.txt\n");
     
     // Cleanup
-    cudaFree(d_token_table);
-    cudaFree(d_pos_table);
-    cudaFree(d_output);
-    free(h_token_table);
-    free(h_pos_table);
-    free(h_result);
+    // cudaFree(d_token_table);
+    // cudaFree(d_pos_table);
+    // cudaFree(d_output);
+    // free(h_token_table);
+    // free(h_pos_table);
+    // free(h_result);
 }
 
 // int main() {

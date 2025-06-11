@@ -80,6 +80,26 @@ std::vector<std::string> get_mha_proj_paths(
     return paths;
 }
 
+std::vector<std::string> get_ln_f_paths(const std::string& folder) {
+    std::vector<std::string> paths;
+    for (const auto& param : {"bias", "weight"}) {
+        std::ostringstream oss;
+        oss << folder << "ln_f." << param << ".txt";
+        paths.push_back(oss.str());
+    }
+    return paths;
+}
+
+std::vector<std::string> get_lm_head_paths(const std::string& folder) {
+    std::vector<std::string> paths;
+    for (const auto& param : {"bias", "weight"}) {
+        std::ostringstream oss;
+        oss << folder << "lm_head." << param << ".txt";
+        paths.push_back(oss.str());
+    }
+    return paths;
+}
+
 float* loadMatrix(int rows, int cols, std::string& source){
     float* data = new float[rows * cols]; // or float data[rows * cols];
   
@@ -310,5 +330,56 @@ std::vector<float*> load_mha_proj_weights(
         cudaMemcpy(d_weight, h_weight, sizeof(float) * d_model * d_model, cudaMemcpyHostToDevice);
         all_weights[2 * b + 1] = d_weight;
     }
+    return all_weights;
+}
+
+std::vector<float*> load_ln_f_weights(
+    int d_model,
+    const std::vector<std::string>& weights_dump
+) {
+    std::vector<float*> all_weights(2); 
+
+    // Bias
+    std::string bias_path = weights_dump[0];
+    float* h_bias = loadMatrix(d_model, 1, bias_path);
+    float* d_bias;
+    cudaMalloc(&d_bias, sizeof(float) * d_model);
+    cudaMemcpy(d_bias, h_bias, sizeof(float) * d_model, cudaMemcpyHostToDevice);
+    all_weights[0] = d_bias;
+
+    // Weight
+    std::string weight_path = weights_dump[1];
+    float* h_weight = loadMatrix(d_model, 1, weight_path);
+    float* d_weight;
+    cudaMalloc(&d_weight, sizeof(float) * d_model);
+    cudaMemcpy(d_weight, h_weight, sizeof(float) * d_model, cudaMemcpyHostToDevice);
+    all_weights[1] = d_weight;
+
+    return all_weights;
+}
+
+std::vector<float*> load_lm_head_weights(
+    int vocab_size,
+    int d_model,
+    const std::vector<std::string>& weights_dump
+) {
+    std::vector<float*> all_weights(2); // bias and weight
+
+    // Bias
+    std::string bias_path = weights_dump[0];
+    float* h_bias = loadMatrix(vocab_size, 1, bias_path);
+    float* d_bias;
+    cudaMalloc(&d_bias, sizeof(float) * vocab_size);
+    cudaMemcpy(d_bias, h_bias, sizeof(float) * vocab_size, cudaMemcpyHostToDevice);
+    all_weights[0] = d_bias;
+
+    // Weight
+    std::string weight_path = weights_dump[1];
+    float* h_weight = loadMatrix(vocab_size, d_model, weight_path);
+    float* d_weight;
+    cudaMalloc(&d_weight, sizeof(float) * vocab_size * d_model);
+    cudaMemcpy(d_weight, h_weight, sizeof(float) * vocab_size * d_model, cudaMemcpyHostToDevice);
+    all_weights[1] = d_weight;
+
     return all_weights;
 }
