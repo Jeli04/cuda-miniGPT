@@ -7,6 +7,51 @@
 
 #pragma once
 
+struct TransformerBlockConfig{
+    int block_size, // batch size
+    int n_heads, // number of heads
+    int d_model, // model dimension
+    int head_dim, // head dimension
+    int n_blocks, // number of blocks
+    int vocab_size, // vocab size
+
+    const std::vector<float*>& qkv_weights, // QKV weights for each block
+    const std::vector<float*>& mha_proj_weights, // MHA projection weights for each block
+    const std::vector<float*>& ln1_weights, // layer norm 1 weights for each block
+    const std::vector<float*>& ln2_weights, // layer norm 2 weights for each block
+    const std::vector<float*>& ffwd_weights, // feed forward weights for each block
+    const std::vector<float*>& lnf_weights, // final layer norm weights
+    const std::vector<float*>& lm_head_weights // language model head weights
+
+    TransformerBlockConfig(
+        int block_size,
+        int n_heads,
+        int d_model,
+        int head_dim,
+        int n_blocks,
+        int vocab_size,
+        const std::vector<float*>& qkv_weights,
+        const std::vector<float*>& mha_proj_weights,
+        const std::vector<float*>& ln1_weights,
+        const std::vector<float*>& ln2_weights,
+        const std::vector<float*>& ffwd_weights,
+        const std::vector<float*>& lnf_weights,
+        const std::vector<float*>& lm_head_weights
+    ) : block_size(block_size),
+        n_heads(n_heads),
+        d_model(d_model),
+        head_dim(head_dim),
+        n_blocks(n_blocks),
+        vocab_size(vocab_size),
+        qkv_weights(qkv_weights),
+        mha_proj_weights(mha_proj_weights),
+        ln1_weights(ln1_weights),
+        ln2_weights(ln2_weights),
+        ffwd_weights(ffwd_weights),
+        lnf_weights(lnf_weights),
+        lm_head_weights(lm_head_weights) {}
+}
+
 std::vector<std::string> get_qkv_path(int n_blocks, int n_heads, const std::string& folder) {
     std::vector<std::string> paths;
     for (int b = 0; b < n_blocks; ++b) {
@@ -123,9 +168,9 @@ float* loadMatrix(int rows, int cols, std::string& source){
         ++row;
     }
   
-    for (int i = 0; i < std::min(5, rows * cols); ++i)
-        std::cout << data[i] << " ";
-    std::cout << std::endl;
+    // for (int i = 0; i < std::min(5, rows * cols); ++i)
+    //     std::cout << data[i] << " ";
+    // std::cout << std::endl;
     return data;
 }
 

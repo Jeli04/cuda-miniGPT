@@ -6,127 +6,11 @@
 #include <ctype.h>
 #include <time.h>
 #include "softmax.cu"
+#include "transformer_block.cu"
+#include "tools.cu"
 
 #define VOCAB_SIZE 84
 
-// Fixed vocabulary loading - no duplicate space tokens
-char** load_vocab_c(const char* filename, int* vocab_size) {
-    FILE* file = fopen(filename, "r");
-    if (!file) {
-        printf("Error: Cannot open vocab file %s\n", filename);
-        return NULL;
-    }
-    
-    // Read vocabulary directly from file
-    int count = 0;
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), file)) count++;
-    rewind(file);
-    
-    char** vocab = (char**)malloc(count * sizeof(char*));
-    int index = 0;
-    
-    while (fgets(buffer, sizeof(buffer), file) && index < count) {
-        // Remove line endings
-        size_t len = strlen(buffer);
-        while (len > 0 && (buffer[len-1] == '\n' || buffer[len-1] == '\r')) {
-            buffer[len-1] = '\0';
-            len--;
-        }
-        
-        vocab[index] = strdup(buffer);
-        
-        // Debug first 10 tokens
-        if (index < 10) {
-            if (vocab[index][0] == ' ') {
-                printf("Vocab[%d]: 'SPACE'\n", index);
-            } else {
-                printf("Vocab[%d]: '%s'\n", index, vocab[index]);
-            }
-        }
-        index++;
-    }
-    
-    *vocab_size = index;
-    fclose(file);
-    printf("Loaded %d tokens total\n", index);
-    return vocab;
-}
-
-// Simple JSON parser for vocabulary
-char** load_vocab_json(const char* filename, int* vocab_size) {
-    FILE* file = fopen(filename, "r");
-    if (!file) {
-        printf("Error: Cannot open vocab file %s\n", filename);
-        return NULL;
-    }
-    
-    // Read entire file
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    
-    char* json_content = (char*)malloc(file_size + 1);
-    fread(json_content, 1, file_size, file);
-    json_content[file_size] = '\0';
-    fclose(file);
-    
-    // Allocate vocabulary array for 84 tokens
-    char** vocab = (char**)calloc(84, sizeof(char*));
-    
-    // Parse JSON manually
-    char* pos = json_content;
-    
-    while ((pos = strstr(pos, "\"")) != NULL) {
-        pos++; // Skip opening quote
-        
-        // Find token ID
-        char* id_end = strchr(pos, '"');
-        if (!id_end) break;
-        
-        // Extract token ID
-        char id_str[10];
-        int id_len = id_end - pos;
-        strncpy(id_str, pos, id_len);
-        id_str[id_len] = '\0';
-        int token_id = atoi(id_str);
-        
-        // Skip to value
-        pos = strstr(id_end, ": \"");
-        if (!pos) break;
-        pos += 3; // Skip ": "
-        
-        // Find end of value
-        char* value_end = pos;
-        while (*value_end && *value_end != '"') {
-            if (*value_end == '\\') value_end++; // Skip escaped chars
-            value_end++;
-        }
-        
-        // Extract token value
-        int value_len = value_end - pos;
-        char* token_value = (char*)malloc(value_len + 1);
-        strncpy(token_value, pos, value_len);
-        token_value[value_len] = '\0';
-        
-        // Handle escape sequences
-        if (strcmp(token_value, "\\n") == 0) {
-            free(token_value);
-            token_value = strdup("\n");
-        }
-        
-        // Store in correct position
-        if (token_id >= 0 && token_id < 84) {
-            vocab[token_id] = token_value;
-        }
-        
-        pos = value_end + 1;
-    }
-    
-    *vocab_size = 84;
-    free(json_content);
-    return vocab;
-}
 
 // Setup random states
 __global__ void setup_random_states(curandState* states, unsigned long seed, int n) {
@@ -141,7 +25,6 @@ __global__ void multinomial_sample_kernel(
     int* selected_token,
     curandState* states,
     int vocab_size
-    // Remove step_number parameter - don't re-seed each step!
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx != 0) return;
@@ -150,15 +33,10 @@ __global__ void multinomial_sample_kernel(
     float coin = curand_uniform(state);
 
     float total_prob = 0.0f;
-    float max_prob = 0.0f;
-    int max_idx = 0;
+
     
     for (int i = 0; i < vocab_size; i++) {
         total_prob += probs[i];
-        if (probs[i] > max_prob) {
-            max_prob = probs[i];
-            max_idx = i;
-        }
     }
     
     float cumulative_prob = 0.0f;
@@ -180,7 +58,6 @@ __global__ void multinomial_sample_kernel(
     *selected_token = selected;
 }
 
-// Convert text to tokens
 int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tokens) {
     int text_len = strlen(text);
     int* token_ids = (int*)malloc(text_len * sizeof(int));
@@ -201,7 +78,6 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
         if (token_id >= 0) {
             token_ids[valid_tokens] = token_id;
         } else {
-            // Find space token as fallback
             for (int j = 0; j < vocab_size; j++) {
                 if (vocab[j] && strlen(vocab[j]) == 1 && vocab[j][0] == ' ') {
                     token_ids[valid_tokens] = j;
@@ -216,10 +92,7 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
     return token_ids;
 }
 
-// Extract last token logits from full logits tensor (matching logits[:, -1, :])
 float* extract_last_token_logits(float* full_logits, int seq_len, int vocab_size) {
-    // Equivalent to PyTorch: logits[:, -1, :]
-    // In row-major storage: last_token_start = (seq_len - 1) * vocab_size
     int last_token_start = (seq_len - 1) * vocab_size;
     
     float* last_logits = (float*)malloc(vocab_size * sizeof(float));
@@ -273,31 +146,18 @@ float* load_and_extract_logits_c(const char* filename, int vocab_size) {
     }
 }
 
-// Simplified generation that matches the Python function exactly
 void generate_tokens_contextual(
     int* input_tokens,
     int input_length,
     int max_new_tokens,
     int vocab_size,
-    char** vocab
+    char** vocab,
+    float* d_transformer_output,
+    float* d_logits,
+    int* d_selected_token,
+    curandState* d_states,
+    TransformerBlockConfig config,
 ) {
-    // Device memory
-    float *d_logits, *d_probs;
-    int *d_selected_token;
-    curandState *d_states;
-    
-    cudaMalloc(&d_logits, vocab_size * sizeof(float));
-    cudaMalloc(&d_probs, vocab_size * sizeof(float));
-    cudaMalloc(&d_selected_token, sizeof(int));
-    cudaMalloc(&d_states, sizeof(curandState));
-    
-    // Synchronize to ensure random states are initialized before sampling
-    cudaDeviceSynchronize();
-    
-    // Use 42 as fixed seed to match Python torch.manual_seed(42)
-    setup_random_states<<<1, 1>>>(d_states, 42, 1);
-    cudaDeviceSynchronize();
-    
     // Create dynamic token sequence (grows with each generation)
     int max_sequence_length = input_length + max_new_tokens;
     int* token_sequence = (int*)malloc(max_sequence_length * sizeof(int));
@@ -319,14 +179,46 @@ void generate_tokens_contextual(
     
     // Generate tokens one by one
     for (int step = 0; step < max_new_tokens; step++) {
-        // Load logits for this step
-        char logits_filename[256];
-        sprintf(logits_filename, "./logits/logits_%d.txt", step);
+        // // Load logits for this step
+        // char logits_filename[256];
+        // sprintf(logits_filename, "./logits/logits_%d.txt", step);
         
-        float* logits = load_and_extract_logits_c(logits_filename, vocab_size);
-        if (!logits) {
-            break;
+        // float* logits = load_and_extract_logits_c(logits_filename, vocab_size);
+        // if (!logits) {
+        //     break;
+        // }
+
+        float* logits = (float*)malloc(vocab_size * sizeof(float));
+        for (int i = 0; i < vocab_size; i++) {
+            logits[i] = 1.0f; // Placeholder for actual logits
         }
+        // Copy logits to device
+        cudaMemcpy(d_logits, config.logits, vocab_size * sizeof(float), cudaMemcpyHostToDevice);
+
+        // for residual layer
+        float* residual_copy; // for residual layer later
+        cudaMalloc(&residual_copy, sizeof(float)* block_size*d_model);
+        cudaMemcpy(residual_copy, d_input, sizeof(float)* block_size*d_model, cudaMemcpyDeviceToDevice);
+
+        // Apply transformer decoder
+        transformer_decoder(
+            d_input
+            d_output
+            residual_copy
+            config.block_size
+            config.n_heads
+            config.d_model
+            config.head_dim
+            config.n_blocks
+            config.vocab_size
+            config.qkv_weights
+            config.mha_proj_weights
+            config.ln1_weights
+            config.ln2_weights
+            config.ffwd_weights
+            config.lnf_weights
+            config.lm_head_weights
+        );
 
         // Apply softmax to get probabilities
         cudaMemcpy(d_logits, logits, vocab_size * sizeof(float), cudaMemcpyHostToDevice);
@@ -347,39 +239,6 @@ void generate_tokens_contextual(
         // Get result and validate
         int next_token;
         cudaMemcpy(&next_token, d_selected_token, sizeof(int), cudaMemcpyDeviceToHost);
-
-        // Show what the top 3 highest probability tokens were for comparison
-        int top_indices[3] = {-1, -1, -1};
-        float top_probs[3] = {-1.0f, -1.0f, -1.0f};
-        
-        // Find top 3 by scanning all tokens
-        for (int i = 0; i < vocab_size; i++) {
-            if (h_probs[i] > top_probs[2]) {
-                // New token beats 3rd place
-                if (h_probs[i] > top_probs[1]) {
-                    // Beats 2nd place
-                    if (h_probs[i] > top_probs[0]) {
-                        // Beats 1st place - shift everything down
-                        top_probs[2] = top_probs[1];
-                        top_indices[2] = top_indices[1];
-                        top_probs[1] = top_probs[0];
-                        top_indices[1] = top_indices[0];
-                        top_probs[0] = h_probs[i];
-                        top_indices[0] = i;
-                    } else {
-                        // Beats 2nd place only
-                        top_probs[2] = top_probs[1];
-                        top_indices[2] = top_indices[1];
-                        top_probs[1] = h_probs[i];
-                        top_indices[1] = i;
-                    }
-                } else {
-                    // Beats 3rd place only
-                    top_probs[2] = h_probs[i];
-                    top_indices[2] = i;
-                }
-            }
-        }
 
         free(h_probs);
         
@@ -404,43 +263,51 @@ void generate_tokens_contextual(
     printf("'%s'\n", full_text);
     printf("======================\n");
     
-    // Cleanup
+}
+
+
+
+// Helper function to cleanup generation resources
+void cleanup_generation_resources(
+    float* d_logits,
+    float* d_probs,
+    int* d_selected_token, 
+    curandState* d_states
+) {
     cudaFree(d_logits);
     cudaFree(d_probs);
     cudaFree(d_selected_token);
     cudaFree(d_states);
-    free(token_sequence);
-    free(full_text);
 }
 
-int main() {
-    // Load vocabulary from JSON
-    int vocab_size;
-    char** vocab = load_vocab_json("vocab.json", &vocab_size);  // Changed from load_vocab_c
-    if (!vocab) {
-        printf("Failed to load vocabulary\n");
-        return 1;
-    }
+// int main() {
+//     // Load vocabulary from JSON
+//     int vocab_size;
+//     char** vocab = load_vocab_json("vocab.json", &vocab_size);  // Changed from load_vocab_c
+//     if (!vocab) {
+//         printf("Failed to load vocabulary\n");
+//         return 1;
+//     }
     
-    // Convert input text to tokens
-    const char* input_text = "To be or not to be";
-    int input_length;
-    int* input_tokens = text_to_tokens(vocab, vocab_size, input_text, &input_length);
+//     // Convert input text to tokens
+//     const char* input_text = "To be or not to be";
+//     int input_length;
+//     int* input_tokens = text_to_tokens(vocab, vocab_size, input_text, &input_length);
     
-    printf("Loaded vocabulary: %d tokens\n", vocab_size);
-    printf("Input: '%s' (%d tokens)\n\n", input_text, input_length);
+//     printf("Loaded vocabulary: %d tokens\n", vocab_size);
+//     printf("Input: '%s' (%d tokens)\n\n", input_text, input_length);
     
-    // Generate text
-    generate_tokens_contextual(input_tokens, input_length, 50, vocab_size, vocab);
+//     // Generate text
+//     generate_tokens_contextual(input_tokens, input_length, 50, vocab_size, vocab);
     
-    // Cleanup
-    free(input_tokens);
-    for (int i = 0; i < vocab_size; i++) {
-        if (vocab[i]) { // Add check for NULL before freeing
-            free(vocab[i]);
-        }
-    }
-    free(vocab);
+//     // Cleanup
+//     free(input_tokens);
+//     for (int i = 0; i < vocab_size; i++) {
+//         if (vocab[i]) { // Add check for NULL before freeing
+//             free(vocab[i]);
+//         }
+//     }
+//     free(vocab);
     
-    return 0;
-}
+//     return 0;
+// }
