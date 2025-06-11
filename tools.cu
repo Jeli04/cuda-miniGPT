@@ -43,6 +43,26 @@ std::vector<std::string> get_layernorm_paths(
     return paths;
 }
 
+std::vector<std::string> get_ffwd_paths(
+    int n_blocks,
+    const std::string& folder)
+{
+    std::vector<std::string> paths;
+    for (int b = 0; b < n_blocks; ++b) {
+        for (const auto& layer : {0, 2}) { 
+            for (const auto& param : {"bias", "weight"}) {
+                std::ostringstream oss;
+                oss << folder
+                    << "block." << b
+                    << ".ffwd." << layer
+                    << "." << param << ".txt";
+                paths.push_back(oss.str());
+            }
+        }
+    }
+    return paths;
+}
+
 float* loadMatrix(int rows, int cols, std::string& source){
     float* data = new float[rows * cols]; // or float data[rows * cols];
   
@@ -180,14 +200,16 @@ std::vector<float*> load_layernorm_weights(
 
     for(int b = 0; b < n_blocks; b++){
         std::string gamma_path = weights_dump[2 * b];
-        float* h_gamma = loadMatrix(n_heads*head_dim, d_model, gamma_path);
+        printf("Loading gamma from %s\n", gamma_path.c_str());
+        float* h_gamma = loadMatrix(d_model, 1, gamma_path);
         float* d_gamma;
         cudaMalloc(&d_gamma, sizeof(float) * n_heads * head_dim * d_model);
         cudaMemcpy(d_gamma, h_gamma, sizeof(float) * n_heads * head_dim * d_model, cudaMemcpyHostToDevice);
         all_weights[2 * b] = d_gamma;
 
         std::string beta_path = weights_dump[2 * b + 1];
-        float* h_beta = loadMatrix(n_heads * head_dim, d_model, beta_path);
+        printf("Loading beta from %s\n", beta_path.c_str());
+        float* h_beta = loadMatrix(d_model, 1, beta_path);
         float* d_beta;
         cudaMalloc(&d_beta, sizeof(float) * n_heads * head_dim * d_model);
         cudaMemcpy(d_beta, h_beta, sizeof(float) * n_heads * head_dim * d_model, cudaMemcpyHostToDevice);
@@ -195,4 +217,53 @@ std::vector<float*> load_layernorm_weights(
     }
 
     return all_weights; // returns a host-side vector of device pointers
+}
+
+
+std::vector<float*> load_ffwd_weights(
+    int n_blocks,
+    int d_model,
+    int hidden_dim, 
+    const std::vector<std::string>& weights_dump
+) {
+    std::vector<float*> all_weights(n_blocks * 4);
+    for(int b = 0; b < n_blocks; b++){
+        // b1
+        std::string b1_path = weights_dump[4 * b + 0];
+        // printf("Loading b1 from %s\n", b1_path.c_str());
+        float* h_b1 = loadMatrix(hidden_dim, 1, b1_path);
+        float* d_b1;
+        cudaMalloc(&d_b1, sizeof(float) * hidden_dim);
+        cudaMemcpy(d_b1, h_b1, sizeof(float) * hidden_dim, cudaMemcpyHostToDevice);
+        all_weights[4 * b + 0] = d_b1;
+
+        // w1
+        std::string w1_path = weights_dump[4 * b + 1];
+        // printf("Loading W1 from %s\n", w1_path.c_str());
+        float* h_w1 = loadMatrix(hidden_dim, d_model, w1_path);
+        float* d_w1;
+        cudaMalloc(&d_w1, sizeof(float) * hidden_dim * d_model);
+        cudaMemcpy(d_w1, h_w1, sizeof(float) * hidden_dim * d_model, cudaMemcpyHostToDevice);
+        all_weights[4 * b + 1] = d_w1;
+
+        // b2
+        std::string b2_path = weights_dump[4 * b + 2];
+        // printf("Loading b2 from %s\n", b2_path.c_str());
+        float* h_b2 = loadMatrix(d_model, 1, b2_path);
+        float* d_b2;
+        cudaMalloc(&d_b2, sizeof(float) * d_model);
+        cudaMemcpy(d_b2, h_b2, sizeof(float) * d_model, cudaMemcpyHostToDevice);
+        all_weights[4 * b + 2] = d_b2;
+
+        // w2
+        std::string w2_path = weights_dump[4 * b + 3];
+        // printf("Loading W2 from %s\n", w2_path.c_str());
+        float* h_w2 = loadMatrix(d_model, hidden_dim, w2_path);
+        float* d_w2;
+        cudaMalloc(&d_w2, sizeof(float) * d_model * hidden_dim);
+        cudaMemcpy(d_w2, h_w2, sizeof(float) * d_model * hidden_dim, cudaMemcpyHostToDevice);
+        all_weights[4 * b + 3] = d_w2;
+    }
+
+    return all_weights; // Host vector of device pointers
 }

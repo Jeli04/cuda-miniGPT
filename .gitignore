@@ -6,6 +6,8 @@ extern/
 cublas_gemm
 test
 transformer_block
+ffwd
+layer_norm
 
 # folders 
 dumps/

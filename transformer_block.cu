@@ -116,11 +116,6 @@ void multi_head_attention(
     basicSgemm(block_size, num_heads*head_dim, block_size, false, false, attn_scores, d_V, d_output);
     cudaDeviceSynchronize();
 
-    float* output_h = (float*) malloc(block_size *  num_heads * head_dim * sizeof(float));
-    cudaMemcpy(output_h, d_output, block_size *  num_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-    std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
-    dumpMatrix(output_h, block_size, num_heads * head_dim, loc);
-
     // dealloc non static values
     // cudaFree(d_Q);
     // cudaFree(d_K);
@@ -177,14 +172,31 @@ int main(){
     float* d_input;
     cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
     cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
-    float* d_input_copy; // for residual layer later
-    cudaMalloc(&d_input_copy, sizeof(float)* block_size*d_model);
-    cudaMemcpy(d_input_copy, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
     float* d_output;
     cudaMalloc(&d_output, sizeof(float)* block_size*n_heads*3*head_dim);
     cudaMemcpy(d_output, output, sizeof(float)* block_size*n_heads*3*head_dim, cudaMemcpyHostToDevice);
 
     for(int b = 0; b < n_blocks; b++) {
+        dim3 grid(block_size);      
+        dim3 block(d_model);  
+
+        // for residual layer
+        float* d_input_copy; // for residual layer later
+        cudaMalloc(&d_input_copy, sizeof(float)* block_size*d_model);
+        cudaMemcpy(d_input_copy, d_input, sizeof(float)* block_size*d_model, cudaMemcpyDeviceToDevice);
+
+        // layer norm     
+        size_t shmem = d_model * sizeof(float);  
+        layer_norm<<<grid, block, shmem>>>(
+            d_input,
+            d_input,
+            ln1_weights[b * 2], // gamma
+            ln1_weights[b * 2 + 1], // beta
+            head_dim,
+            d_model
+        );
+        cudaDeviceSynchronize();
+
         // launch mha
         multi_head_attention(
             block_size,
@@ -195,37 +207,42 @@ int main(){
             d_input, // input
             d_output // output
         );
-        cudaMemcpy(d_input, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToDevice);
 
         // residual connection
-        dim3 grid((block_size+BLOCK_SIZE-1)/BLOCK_SIZE,  (n_heads * head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE);
-        dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+        grid = dim3((block_size+BLOCK_SIZE-1)/BLOCK_SIZE,  (n_heads * head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        block= dim3(BLOCK_SIZE, BLOCK_SIZE);
         add_residual<<<grid, block>>>(d_input_copy, d_output, d_output, block_size, n_heads * head_dim);
         cudaDeviceSynchronize();
 
-        // layer norm     
-        size_t shmem = d_model * sizeof(float);  
-        layer_norm<<<grid, block, shmem>>>(
-            d_output,
-            d_output,
-            ln2_weights[b * 2], // gamma
-            ln2_weights[b * 2 + 1], // beta
-            head_dim,
-            d_model
-        );
-        cudaDeviceSynchronize();
+        // // layer norm     
+        // layer_norm<<<grid, block, shmem>>>(
+        //     d_output,
+        //     d_output,
+        //     ln2_weights[b * 2], // gamma
+        //     ln2_weights[b * 2 + 1], // beta
+        //     head_dim,
+        //     d_model
+        // );
+        // cudaDeviceSynchronize();
 
+        if (b < n_blocks - 1) {
+            cudaMemcpy(d_input, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToDevice);
+        }
 
         printf("Block %d processed.\n", b);
+
+        float* output_h = (float*) malloc(block_size *  n_heads * head_dim * sizeof(float));
+        cudaMemcpy(output_h, d_output, block_size *  n_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+        std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
+        dumpMatrix(output_h, block_size, n_heads * head_dim, loc);
     }
 
 
-
-    float* h_input = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
-    cudaMemcpy(h_input, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToHost);
+    float* output_h = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
+    cudaMemcpy(output_h, d_output, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToHost);
     // printMatrix(h_input, block_size, n_heads * head_dim);
     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
-    dumpMatrix(h_input, block_size, n_heads * head_dim, loc);
+    dumpMatrix(output_h, block_size, n_heads * head_dim, loc);
 
     cudaFree(d_input);
     cudaFree(d_output);
