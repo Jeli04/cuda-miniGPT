@@ -80,11 +80,14 @@ void multi_head_attention(
 ){
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
+    float* d_qkv_proj;
+    cudaMalloc(&d_qkv_proj, sizeof(float) * block_size * num_heads * 3 * head_dim);
+    
     // get QKV projections
     dim3 dim_block(BLOCK_SIZE, BLOCK_SIZE);
     // dim3 dim_grid(num_heads, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE, (num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE); 
     dim3 dim_grid((num_heads*3*head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE); 
-    mysgemm<<<dim_grid, dim_block>>>(block_size, num_heads*3*head_dim, d_model, false, true, d_input, qkv_w, d_output);
+    mysgemm<<<dim_grid, dim_block>>>(block_size, num_heads*3*head_dim, d_model, false, true, d_input, qkv_w, d_qkv_proj);
     cudaDeviceSynchronize();
 
     // split QKV into Q, K, V
@@ -96,7 +99,7 @@ void multi_head_attention(
     cudaMalloc(&d_V, sizeof(float)*block_size*num_heads*head_dim); // allovate V 
     dim_block= dim3(BLOCK_SIZE); // create the block dim 
     dim_grid=dim3((block_size*3*num_heads*head_dim+BLOCK_SIZE)/BLOCK_SIZE); // create the grid dim
-    splitQKV<<<dim_grid, dim_block>>>(d_output, d_Q, d_K, d_V, block_size, num_heads*head_dim);
+    splitQKV<<<dim_grid, dim_block>>>(d_qkv_proj, d_Q, d_K, d_V, block_size, num_heads*head_dim);
     cudaDeviceSynchronize();
 
     // Compute attention scores 
@@ -116,6 +119,11 @@ void multi_head_attention(
     basicSgemm(block_size, num_heads*head_dim, block_size, false, false, attn_scores, d_V, d_output);
     cudaDeviceSynchronize();
 
+    // float* output_h = (float*) malloc(block_size *  num_heads * head_dim * sizeof(float));
+    // cudaMemcpy(output_h, d_output, block_size *  num_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    // std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test3.txt";
+    // dumpMatrix(output_h, block_size, num_heads * head_dim, loc);
+
     // dealloc non static values
     // cudaFree(d_Q);
     // cudaFree(d_K);
@@ -129,7 +137,7 @@ int main(){
     const int n_heads = 8;
     const int block_size = 64;
     const int head_dim = 16;
-    const int n_blocks = 6;
+    const int n_blocks = 1;
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
     // load the weights
@@ -165,16 +173,16 @@ int main(){
         if(i < 10) input[i] = 10.0f; // fill first 10 with tens
         else input[i] = 1.0f; // fill with ones
     }
-    float* output = (float*) malloc(sizeof(float) * block_size * 3 * n_heads * head_dim);
-    for(int i = 0; i < block_size * 3 * n_heads * head_dim; i++) output[i] = 2.0f; // fill with ones
+    float* output = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
+    for(int i = 0; i < block_size * n_heads * head_dim; i++) output[i] = 2.0f; // fill with ones
 
     // move input and output 
     float* d_input;
     cudaMalloc(&d_input, sizeof(float)* block_size*d_model);
     cudaMemcpy(d_input, input, sizeof(float)* block_size*d_model, cudaMemcpyHostToDevice);
     float* d_output;
-    cudaMalloc(&d_output, sizeof(float)* block_size*n_heads*3*head_dim);
-    cudaMemcpy(d_output, output, sizeof(float)* block_size*n_heads*3*head_dim, cudaMemcpyHostToDevice);
+    cudaMalloc(&d_output, sizeof(float)* block_size*n_heads*head_dim);
+    cudaMemcpy(d_output, output, sizeof(float)* block_size*n_heads*head_dim, cudaMemcpyHostToDevice);
 
     for(int b = 0; b < n_blocks; b++) {
         dim3 grid(block_size);      
