@@ -63,6 +63,23 @@ std::vector<std::string> get_ffwd_paths(
     return paths;
 }
 
+std::vector<std::string> get_mha_proj_paths(
+    int n_blocks,
+    const std::string& folder
+) {
+    std::vector<std::string> paths;
+    for (int b = 0; b < n_blocks; ++b) {
+        for (const auto& param : {"bias", "weight"}) {
+            std::ostringstream oss;
+            oss << folder
+                << "block." << b
+                << ".mha.proj." << param << ".txt";
+            paths.push_back(oss.str());
+        }
+    }
+    return paths;
+}
+
 float* loadMatrix(int rows, int cols, std::string& source){
     float* data = new float[rows * cols]; // or float data[rows * cols];
   
@@ -122,6 +139,7 @@ void loadQKVCombined(
         ++row;
     }
 }
+
 
 void dumpMatrix(float* matrix, int rows, int cols, const std::string& destination) {
     std::ofstream outfile(destination);
@@ -266,4 +284,31 @@ std::vector<float*> load_ffwd_weights(
     }
 
     return all_weights; // Host vector of device pointers
+}
+
+
+std::vector<float*> load_mha_proj_weights(
+    int n_blocks,
+    int d_model,
+    const std::vector<std::string>& weights_dump
+) {
+    std::vector<float*> all_weights(n_blocks * 2);
+    for(int b = 0; b < n_blocks; ++b) {
+        // Bias
+        std::string bias_path = weights_dump[2 * b + 0];
+        float* h_bias = loadMatrix(d_model, 1, bias_path);
+        float* d_bias;
+        cudaMalloc(&d_bias, sizeof(float) * d_model);
+        cudaMemcpy(d_bias, h_bias, sizeof(float) * d_model, cudaMemcpyHostToDevice);
+        all_weights[2 * b + 0] = d_bias;
+
+        // Weight
+        std::string weight_path = weights_dump[2 * b + 1];
+        float* h_weight = loadMatrix(d_model, d_model, weight_path); // assuming weight is [d_model, d_model]
+        float* d_weight;
+        cudaMalloc(&d_weight, sizeof(float) * d_model * d_model);
+        cudaMemcpy(d_weight, h_weight, sizeof(float) * d_model * d_model, cudaMemcpyHostToDevice);
+        all_weights[2 * b + 1] = d_weight;
+    }
+    return all_weights;
 }
