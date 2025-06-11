@@ -1,11 +1,10 @@
 #include <stdio.h>
-#include "sgemm.cu"
-#include "softmax.cu"
-#include "tools.cu"
+#include "tools.h"
 #include <vector>
 #include <cstring>
-#include "Generate.cu"
+#include "generate.h"
 #include "minigpt.h"
+#include "positional_encoding_resources.h"
 
 // Global weight vectors initialized once outside main
 std::vector<float*> qkv_weights;
@@ -180,7 +179,6 @@ int main() {
     initialize_positional_encoding_resources(&pos_resources, max_seq_len, vocab_size, d_model);
 
     // CUDA memory for token selection and RNG state
-    int* d_selected_token;
     curandState* d_states;
     initialize_generation_resources(&d_states);
 
@@ -207,8 +205,10 @@ int main() {
     // Load transformer weights (populates global vectors)
     load_all_weights(n_blocks, n_heads, d_model, head_dim, vocab_size, weights_folder);
 
+    printf("here")
+
     // Build weights struct with device pointers
-    TransformerWeights model_weights(
+    TransformerWeights& model_weights(
         d_token_table,
         d_pos_table,
         qkv_weights,
@@ -221,7 +221,7 @@ int main() {
     );
 
     // Create model
-    MiniGPT gpt_model(
+    MiniGPT& gpt_model(
         block_size,
         n_heads,
         d_model,
@@ -231,18 +231,23 @@ int main() {
         model_weights
     );
 
-    // // Run text generation
-    // int max_new_gen_tokens = 50;
-    // generate_tokens_contextual(
-    //     prompt_tokens,
-    //     prompt_length,
-    //     max_new_gen_tokens,
-    //     gen_vocab_size,
-    //     gen_vocab,
-    //     d_selected_token,
-    //     d_states,
-    //     gpt_model
-    // );
+    // Run text generation
+    int max_new_gen_tokens = 50;
+    generate_tokens_contextual(
+        block_size,
+        d_model,
+        n_heads,
+        head_dim,
+        n_blocks,
+        prompt_tokens,
+        prompt_length,
+        max_new_gen_tokens,
+        gen_vocab_size,
+        gen_vocab,
+        d_states,
+        pos_resources,
+        gpt_model
+    );
 
     // printf("Text generation finished.\n");
 

@@ -8,6 +8,7 @@ test
 transformer_block
 ffwd
 layer_norm
+*.o
 
 # folders 
 dumps/

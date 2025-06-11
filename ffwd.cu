@@ -1,6 +1,7 @@
 #include <stdio.h>
-#include "sgemm.cu"
-#include "tools.cu"
+#include "sgemm.h"
+#include "tools.h"
+#include "ffwd.h"
 
 #define TILE_SIZE 16
 

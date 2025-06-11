@@ -1,7 +1,7 @@
 #include "minigpt.h"
-#include "tools.cu"
-#include "transformer_block.cu"
-#include "positional_encoding.cu"
+#include "transformer_block.h"
+#include "positional_encoding.h"
+#include "tools.h"
 
 TransformerWeights::TransformerWeights(
     const float* d_token_table,
@@ -54,7 +54,6 @@ void MiniGPT::forward_pass(
     PositionalEncodingResources& pos_resources,
     float* d_input,
     float* d_output,
-    float* residual_copy,
     int block_size,
     int n_heads,
     int d_model,
@@ -73,6 +72,12 @@ void MiniGPT::forward_pass(
         max_seq_len,
         &pos_resources
     );
+
+    // create residual copy
+    float* residual_copy; // for residual layer later
+    cudaMalloc(&residual_copy, sizeof(float)* block_size*d_model);
+    cudaMemcpy(residual_copy, d_input, sizeof(float)* block_size*d_model, cudaMemcpyDeviceToDevice);
+    
 
     transformer_decoder(
         d_input,

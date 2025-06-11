@@ -1,11 +1,12 @@
 #include <stdio.h>
-#include "sgemm.cu"
-#include "softmax.cu"
-#include "tools.cu"
 #include <vector>
 #include <cstring>
-#include "layer_norm.cu"
-#include "ffwd.cu"
+#include "sgemm.h"
+#include "softmax.h"
+#include "tools.h"
+#include "transformer_block.h"
+#include "layer_norm.h"
+#include "ffwd.h"
 
 #define TILE_SIZE 16\
 

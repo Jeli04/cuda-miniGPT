@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <iostream>
+#include "sgemm.h"
 
 #define TILE_SIZE 16
 #pragma once

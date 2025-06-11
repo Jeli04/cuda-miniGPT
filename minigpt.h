@@ -57,7 +57,6 @@ public:
         PositionalEncodingResources& pos_resources,
         float* d_input,
         float* d_output,
-        float* residual_copy,
         int block_size,
         int n_heads,
         int d_model,
