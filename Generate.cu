@@ -5,9 +5,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
-#include "softmax.cu"
-#include "transformer_block.cu"
-#include "tools.cu"
+// #include "tools.cu"
+#include "minigpt.h"
 
 #define VOCAB_SIZE 84
 
@@ -147,6 +146,8 @@ float* load_and_extract_logits_c(const char* filename, int vocab_size) {
 }
 
 void generate_tokens_contextual(
+    int block_size,
+    int d_model,
     int* input_tokens,
     int input_length,
     int max_new_tokens,
@@ -156,8 +157,13 @@ void generate_tokens_contextual(
     float* d_logits,
     int* d_selected_token,
     curandState* d_states,
-    TransformerBlockConfig config,
+    TransformerWeights config
+    minigpt::MiniGPT& gpt_model
 ) {
+    // Allocate GPU buffer for input
+    float* d_input;
+    cudaMalloc(&d_input, seq_len * d_model * sizeof(float));
+
     // Create dynamic token sequence (grows with each generation)
     int max_sequence_length = input_length + max_new_tokens;
     int* token_sequence = (int*)malloc(max_sequence_length * sizeof(int));
@@ -193,7 +199,7 @@ void generate_tokens_contextual(
             logits[i] = 1.0f; // Placeholder for actual logits
         }
         // Copy logits to device
-        cudaMemcpy(d_logits, config.logits, vocab_size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_logits, logits, vocab_size * sizeof(float), cudaMemcpyHostToDevice);
 
         // for residual layer
         float* residual_copy; // for residual layer later
@@ -201,26 +207,28 @@ void generate_tokens_contextual(
         cudaMemcpy(residual_copy, d_input, sizeof(float)* block_size*d_model, cudaMemcpyDeviceToDevice);
 
         // Apply transformer decoder
-        transformer_decoder(
-            d_input
-            d_output
-            residual_copy
-            config.block_size
-            config.n_heads
-            config.d_model
-            config.head_dim
-            config.n_blocks
-            config.vocab_size
-            config.qkv_weights
-            config.mha_proj_weights
-            config.ln1_weights
-            config.ln2_weights
-            config.ffwd_weights
-            config.lnf_weights
-            config.lm_head_weights
-        );
+        // transformer_decoder(
+        //     d_input
+        //     d_output
+        //     residual_copy
+        //     config.block_size
+        //     config.n_heads
+        //     config.d_model
+        //     config.head_dim
+        //     config.n_blocks
+        //     config.vocab_size
+        //     config.qkv_weights
+        //     config.mha_proj_weights
+        //     config.ln1_weights
+        //     config.ln2_weights
+        //     config.ffwd_weights
+        //     config.lnf_weights
+        //     config.lm_head_weights
+        // );
 
         // Apply softmax to get probabilities
+        float* d_probs;
+        cudaMalloc(&d_probs, vocab_size * sizeof(float));
         cudaMemcpy(d_logits, logits, vocab_size * sizeof(float), cudaMemcpyHostToDevice);
         softmax(d_logits, d_probs, 1, vocab_size);
 

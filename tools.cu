@@ -7,51 +7,6 @@
 
 #pragma once
 
-struct TransformerBlockConfig{
-    int block_size, // batch size
-    int n_heads, // number of heads
-    int d_model, // model dimension
-    int head_dim, // head dimension
-    int n_blocks, // number of blocks
-    int vocab_size, // vocab size
-
-    const std::vector<float*>& qkv_weights, // QKV weights for each block
-    const std::vector<float*>& mha_proj_weights, // MHA projection weights for each block
-    const std::vector<float*>& ln1_weights, // layer norm 1 weights for each block
-    const std::vector<float*>& ln2_weights, // layer norm 2 weights for each block
-    const std::vector<float*>& ffwd_weights, // feed forward weights for each block
-    const std::vector<float*>& lnf_weights, // final layer norm weights
-    const std::vector<float*>& lm_head_weights // language model head weights
-
-    TransformerBlockConfig(
-        int block_size,
-        int n_heads,
-        int d_model,
-        int head_dim,
-        int n_blocks,
-        int vocab_size,
-        const std::vector<float*>& qkv_weights,
-        const std::vector<float*>& mha_proj_weights,
-        const std::vector<float*>& ln1_weights,
-        const std::vector<float*>& ln2_weights,
-        const std::vector<float*>& ffwd_weights,
-        const std::vector<float*>& lnf_weights,
-        const std::vector<float*>& lm_head_weights
-    ) : block_size(block_size),
-        n_heads(n_heads),
-        d_model(d_model),
-        head_dim(head_dim),
-        n_blocks(n_blocks),
-        vocab_size(vocab_size),
-        qkv_weights(qkv_weights),
-        mha_proj_weights(mha_proj_weights),
-        ln1_weights(ln1_weights),
-        ln2_weights(ln2_weights),
-        ffwd_weights(ffwd_weights),
-        lnf_weights(lnf_weights),
-        lm_head_weights(lm_head_weights) {}
-}
-
 std::vector<std::string> get_qkv_path(int n_blocks, int n_heads, const std::string& folder) {
     std::vector<std::string> paths;
     for (int b = 0; b < n_blocks; ++b) {
@@ -427,4 +382,55 @@ std::vector<float*> load_lm_head_weights(
     all_weights[1] = d_weight;
 
     return all_weights;
+}
+
+
+// position encoding stuff
+
+// Structure to hold pre-allocated positional encoding resources
+struct PositionalEncodingResources {
+    float* d_token_onehot;
+    float* d_pos_onehot;
+    float* d_token_embeddings;
+    float* d_pos_embeddings;
+    float* h_token_onehot;
+    float* h_pos_onehot;
+    int max_seq_len;
+    int vocab_size;
+    int d_model;
+};
+
+// Initialize positional encoding resources outside the main function
+void initialize_positional_encoding_resources(
+    PositionalEncodingResources* resources,
+    int max_seq_len,
+    int vocab_size,
+    int d_model
+) {
+    resources->max_seq_len = max_seq_len;
+    resources->vocab_size = vocab_size;
+    resources->d_model = d_model;
+    
+    // Allocate device memory for maximum possible sequence length
+    cudaMalloc(&resources->d_token_onehot, max_seq_len * vocab_size * sizeof(float));
+    cudaMalloc(&resources->d_pos_onehot, max_seq_len * max_seq_len * sizeof(float));
+    cudaMalloc(&resources->d_token_embeddings, max_seq_len * d_model * sizeof(float));
+    cudaMalloc(&resources->d_pos_embeddings, max_seq_len * d_model * sizeof(float));
+    
+    // Allocate host memory for maximum possible sequence length
+    resources->h_token_onehot = (float*)calloc(max_seq_len * vocab_size, sizeof(float));
+    resources->h_pos_onehot = (float*)calloc(max_seq_len * max_seq_len, sizeof(float));
+    
+    printf("Positional encoding resources initialized for max_seq_len=%d, vocab_size=%d, d_model=%d\n", 
+           max_seq_len, vocab_size, d_model);
+}
+
+// Cleanup positional encoding resources
+void cleanup_positional_encoding_resources(PositionalEncodingResources* resources) {
+    cudaFree(resources->d_token_onehot);
+    cudaFree(resources->d_pos_onehot);
+    cudaFree(resources->d_token_embeddings);
+    cudaFree(resources->d_pos_embeddings);
+    free(resources->h_token_onehot);
+    free(resources->h_pos_onehot);
 }

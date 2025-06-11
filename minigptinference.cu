@@ -4,8 +4,8 @@
 #include "tools.cu"
 #include <vector>
 #include <cstring>
-#include "positional_encoding.cu"
 #include "Generate.cu"
+#include "minigpt.h"
 
 // Global weight vectors initialized once outside main
 std::vector<float*> qkv_weights;
@@ -148,7 +148,7 @@ char** load_vocab_json(const char* filename, int* vocab_size) {
 }
 
 void initialize_generation_resources(
-    curandState** d_states,
+    curandState** d_states
 ) {
     cudaMalloc(d_states, sizeof(curandState));
     
@@ -159,127 +159,58 @@ void initialize_generation_resources(
 
 
 
-int main(){
-    const int d_model = 128; 
+int main() {
+    // Model parameters
+    const int d_model = 128;
     const int n_heads = 8;
     const int block_size = 64;
     const int head_dim = 16;
     const int n_blocks = 6;
     int vocab_size = 84;
     int max_seq_len = 64;
-    int seq_len = block_size; // "To be or not to be" length
-    const unsigned int BLOCK_SIZE = TILE_SIZE;
+    int seq_len = block_size;
 
-    // Load vocabulary for generation
+    // Load vocabulary
     int gen_vocab_size;
     char** gen_vocab = load_vocab_json("vocab.json", &gen_vocab_size);
-    if (!gen_vocab) {
-        printf("Failed to load vocabulary for generation\n");
-        return 1;
-    }
-    printf("Loaded vocabulary for generation: %d tokens\n", gen_vocab_size);
-    
+    if (!gen_vocab) return 1;
+
+    // Setup positional encoding
     PositionalEncodingResources pos_resources;
     initialize_positional_encoding_resources(&pos_resources, max_seq_len, vocab_size, d_model);
 
-    // Initialize generation device memory
-    int *d_selected_token;
-    curandState *d_states;
-    
-    initialize_generation_resources(
-        &d_states,
-    );
-    
-    // Prepare generation prompt tokens
-    const char* generation_prompt_text = "To be or not to be";
-    int generation_prompt_length;
-    int* generation_prompt_tokens = text_to_tokens(gen_vocab, gen_vocab_size, generation_prompt_text, &generation_prompt_length);
-    
-    printf("Generation prompt: '%s' (%d tokens)\n", generation_prompt_text, generation_prompt_length);
+    // CUDA memory for token selection and RNG state
+    int* d_selected_token;
+    curandState* d_states;
+    initialize_generation_resources(&d_states);
 
-    // Load embedding tables
+    // Tokenize prompt
+    const char* prompt = "To be or not to be";
+    int prompt_length;
+    int* prompt_tokens = text_to_tokens(gen_vocab, gen_vocab_size, prompt, &prompt_length);
+
+    // Load embeddings from files
     std::string weights_folder = "./weights_dump/";
-    std::string token_file = weights_folder + "token_embedding_table.weight.txt";
-    std::string pos_file = weights_folder + "position_embedding_table.weight.txt";
+    std::string location = weights_folder + "token_embedding_table.weight.txt";
+    float* h_token_table = loadMatrix(vocab_size, d_model, location);
+    location = weights_folder + "position_embedding_table.weight.txt";
+    float* h_pos_table = loadMatrix(max_seq_len, d_model, location);
 
-    float* h_token_table = loadMatrix(vocab_size, d_model, token_file);
-    float* h_pos_table = loadMatrix(max_seq_len, d_model, pos_file);
-
-    printf("Loaded token embedding table: %d x %d\n", vocab_size, d_model);
-    printf("Loaded position embedding table: %d x %d\n", max_seq_len, d_model);
-
-    // Allocate device memory
+    // Copy embeddings to GPU
     float* d_token_table;
     float* d_pos_table;
-    float* d_input;
-
     cudaMalloc(&d_token_table, vocab_size * d_model * sizeof(float));
     cudaMalloc(&d_pos_table, max_seq_len * d_model * sizeof(float));
-    cudaMalloc(&d_input, seq_len * d_model * sizeof(float));
-
-    // Copy to device
     cudaMemcpy(d_token_table, h_token_table, vocab_size * d_model * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pos_table, h_pos_table, max_seq_len * d_model * sizeof(float), cudaMemcpyHostToDevice);
 
-    int h_tokens[64] = {
-        45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60,
-        45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60,
-        45, 70, 1, 57, 60, 1, 70, 73, 1, 69, 70, 75, 1, 75, 70, 1, 57, 60,
-        45, 70, 1, 57, 60, 1, 70, 73, 1, 69
-    };
-    printf("Processing sequence using SGEMM matrix multiplication...\n");
-
-    // Process sequence using sgemm
-    embed_sequence_sgemm(
-        d_input,
-        d_token_table,
-        d_pos_table,
-        h_tokens,
-        seq_len,
-        d_model,
-        vocab_size,
-        max_seq_len,
-        &pos_resources
-    );
-
-    // Copy results back
-    float* h_result = (float*)malloc(seq_len * d_model * sizeof(float));
-    cudaMemcpy(h_result, d_input, seq_len * d_model * sizeof(float), cudaMemcpyDeviceToHost);
-
-    // Show results for first token
-    printf("Sequence embedding (first token, first 8 dims): ");
-    for (int i = 0; i < 8; i++) {
-        printf("%.6f ", h_result[i]);
-    }
-    printf("\n");
-
-    // Save results
-    dumpMatrix(h_result, seq_len, d_model, "./positional_embedding_result.txt");
-    printf("Saved positional results to: positional_embedding_result.txt\n");
-
-    // Load all weights once - moved outside of main processing
+    // Load transformer weights (populates global vectors)
     load_all_weights(n_blocks, n_heads, d_model, head_dim, vocab_size, weights_folder);
 
-    // setup input and output
-    // float* input = (float*) malloc(sizeof(float) * block_size * d_model);
-    // for(int i = 0; i < block_size * d_model; i++){
-    //     if(i < 10) input[i] = 10.0f; // fill first 10 with tens
-    //     else input[i] = 1.0f; // fill with ones
-    // }
-    float* output = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
-    for(int i = 0; i < block_size * n_heads * head_dim; i++) output[i] = 2.0f; // fill with ones
-
-    // Now call generation with pre-initialized resources
-    int max_new_gen_tokens = 50; 
-
-    // store all the model stuff into one config
-    TransformerBlockConfig config(
-        block_size,
-        n_heads,
-        d_model,
-        head_dim,
-        n_blocks,
-        vocab_size,
+    // Build weights struct with device pointers
+    TransformerWeights model_weights(
+        d_token_table,
+        d_pos_table,
         qkv_weights,
         mha_proj_weights,
         ln1_weights,
@@ -289,52 +220,56 @@ int main(){
         lm_head_weights
     );
 
-    int* input_tokens,
-    int input_length,
-    int max_new_tokens,
-    int vocab_size,
-    char** vocab,
-    int* d_selected_token,
-    curandState* d_states,
-    TransformerBlockConfig config,
-
-    generate_tokens_contextual(
-        generation_prompt_tokens, 
-        generation_prompt_length, 
-        max_new_gen_tokens, 
-        gen_vocab_size, 
-        gen_vocab,
-        d_selected_token,   // Pre-allocated
-        d_states,   // Pre-initialized
-        config // the model config 
+    // Create model
+    MiniGPT gpt_model(
+        block_size,
+        n_heads,
+        d_model,
+        d_model * 4,
+        n_blocks,
+        vocab_size,
+        model_weights
     );
 
-    printf("Text generation finished.\n");
+    // // Run text generation
+    // int max_new_gen_tokens = 50;
+    // generate_tokens_contextual(
+    //     prompt_tokens,
+    //     prompt_length,
+    //     max_new_gen_tokens,
+    //     gen_vocab_size,
+    //     gen_vocab,
+    //     d_selected_token,
+    //     d_states,
+    //     gpt_model
+    // );
 
-    // Cleanup generation resources
-    cleanup_generation_resources(d_gen_logits, d_gen_probs, d_selected_token, d_states);
-    
-    // Cleanup generation vocabulary and tokens
-    free(generation_prompt_tokens);
-    for (int i = 0; i < gen_vocab_size; i++) {
-        if (gen_vocab[i]) {
-            free(gen_vocab[i]);
-        }
-    }
-    free(gen_vocab);
+    // printf("Text generation finished.\n");
 
-    // Cleanup transformer resources
-    cudaFree(d_token_table);
-    cudaFree(d_pos_table);
-    cudaFree(d_input);
-    cudaFree(d_output);
-    cudaFree(residual_copy);
+    // // Cleanup generation resources
+    // cleanup_generation_resources(d_gen_logits, d_gen_probs, d_selected_token, d_states);
     
-    free(h_token_table);
-    free(h_pos_table);
-    free(h_result);
-    // free(input);
-    free(output);
+    // // Cleanup generation vocabulary and tokens
+    // free(generation_prompt_tokens);
+    // for (int i = 0; i < gen_vocab_size; i++) {
+    //     if (gen_vocab[i]) {
+    //         free(gen_vocab[i]);
+    //     }
+    // }
+    // free(gen_vocab);
+
+    // // Cleanup transformer resources
+    // cudaFree(d_token_table);
+    // cudaFree(d_pos_table);
+    // cudaFree(d_input);
+    // cudaFree(d_output);
+    // cudaFree(residual_copy);
+    
+    // free(h_token_table);
+    // free(h_pos_table);
+    // free(h_result);
+    // // free(input);
+    // free(output);
 
     return 0;
 }
