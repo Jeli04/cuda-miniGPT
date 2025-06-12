@@ -8,7 +8,7 @@
 #include "layer_norm.h"
 #include "ffwd.h"
 
-#define TILE_SIZE 64\
+#define TILE_SIZE 64
 
 #define CHECK_CUDA(msg) \
   { cudaError_t err = cudaGetLastError(); \
