@@ -3,7 +3,7 @@
 #include "tools.h"
 #include "softmax.h"
 
-#define TILE_SIZE 16
+#define TILE_SIZE 64
 #pragma once
 
 // https://youtu.be/IpHjDoW4ffw?si=oVyTlxgyjhpEv39F

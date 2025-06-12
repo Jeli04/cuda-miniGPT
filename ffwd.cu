@@ -3,7 +3,7 @@
 #include "tools.h"
 #include "ffwd.h"
 
-#define TILE_SIZE 16
+#define TILE_SIZE 64
 
 __global__ void add_bias(const float* input, const float* bias, float* output, int total, int cols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
