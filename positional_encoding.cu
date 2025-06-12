@@ -84,7 +84,7 @@ void embed_sequence_sgemm(
     );
     
     // Cleanup temporary resources
-    cleanup_positional_encoding_resources(&temp_resources);
+    // cleanup_positional_encoding_resources(&temp_resources);
 }
 
 // Test function using sgemm with pre-allocated resources

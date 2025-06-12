@@ -123,6 +123,8 @@ float* loadMatrix(int rows, int cols, std::string& source){
         }
         ++row;
     }
+
+    printf("Loaded matrix from %s: %d x %d\n", source.c_str(), rows, cols);
   
     // for (int i = 0; i < std::min(5, rows * cols); ++i)
     //     std::cout << data[i] << " ";
@@ -235,7 +237,7 @@ std::vector<float*> load_layernorm_weights(
     int head_dim,
     const std::vector<std::string>& weights_dump
 ) {
-    std::vector<float*> all_weights(n_blocks);
+    std::vector<float*> all_weights(n_blocks * 2 + 1);
 
     for(int b = 0; b < n_blocks; b++){
         std::string gamma_path = weights_dump[2 * b];
@@ -246,12 +248,13 @@ std::vector<float*> load_layernorm_weights(
         cudaMemcpy(d_gamma, h_gamma, sizeof(float) * n_heads * head_dim * d_model, cudaMemcpyHostToDevice);
         all_weights[2 * b] = d_gamma;
 
+        // Beta
         std::string beta_path = weights_dump[2 * b + 1];
         printf("Loading beta from %s\n", beta_path.c_str());
         float* h_beta = loadMatrix(d_model, 1, beta_path);
         float* d_beta;
-        cudaMalloc(&d_beta, sizeof(float) * n_heads * head_dim * d_model);
-        cudaMemcpy(d_beta, h_beta, sizeof(float) * n_heads * head_dim * d_model, cudaMemcpyHostToDevice);
+        cudaMalloc(&d_beta, sizeof(float) * d_model);
+        cudaMemcpy(d_beta, h_beta, sizeof(float) * d_model, cudaMemcpyHostToDevice);
         all_weights[2 * b + 1] = d_beta;
     }
 

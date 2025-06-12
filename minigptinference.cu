@@ -36,7 +36,7 @@ void load_all_weights(int n_blocks, int n_heads, int d_model, int head_dim, int 
         head_dim,
         ln1_dump_path
     );
-    
+
     std::vector<std::string> ln2_dump_path = get_layernorm_paths(n_blocks, 2, folder);
     ln2_weights = load_layernorm_weights(
         n_blocks, 
@@ -45,7 +45,7 @@ void load_all_weights(int n_blocks, int n_heads, int d_model, int head_dim, int 
         head_dim,
         ln2_dump_path
     );
-    
+
     std::vector<std::string> ffwd_dump_path = get_ffwd_paths(n_blocks, folder);
     ffwd_weights = load_ffwd_weights(
         n_blocks,
@@ -55,19 +55,18 @@ void load_all_weights(int n_blocks, int n_heads, int d_model, int head_dim, int 
     );
     
     std::vector<std::string> mha_proj_dump_path = get_mha_proj_paths(n_blocks, folder);
-    std::vector<float*> mha_proj_weights = load_mha_proj_weights(
+    mha_proj_weights = load_mha_proj_weights(
         n_blocks,
         d_model,     
         mha_proj_dump_path
     );
     std::vector<std::string> lnf_dump_path = get_ln_f_paths(folder);
-    std::vector<float*> lnf_weights = load_ln_f_weights(
+    lnf_weights = load_ln_f_weights(
         d_model,     
         lnf_dump_path
     );
     std::vector<std::string> lm_head_paths = get_lm_head_paths(folder);
-    std::vector<float*> lm_head_weights = load_lm_head_weights(vocab_size, d_model, lm_head_paths);
-
+    lm_head_weights = load_lm_head_weights(vocab_size, d_model, lm_head_paths);
     printf("All transformer weights loaded successfully.\n");
 }
 
@@ -186,9 +185,13 @@ int main() {
     const char* prompt = "To be or not to be";
     int prompt_length;
     int* prompt_tokens = text_to_tokens(gen_vocab, gen_vocab_size, prompt, &prompt_length);
+    if (!prompt_tokens) {
+        printf("Error: prompt_tokens is NULL!\n");
+        return 1;
+    }
 
     // Load embeddings from files
-    std::string weights_folder = "./weights_dump/";
+    std::string weights_folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
     std::string location = weights_folder + "token_embedding_table.weight.txt";
     float* h_token_table = loadMatrix(vocab_size, d_model, location);
     location = weights_folder + "position_embedding_table.weight.txt";
@@ -204,11 +207,9 @@ int main() {
 
     // Load transformer weights (populates global vectors)
     load_all_weights(n_blocks, n_heads, d_model, head_dim, vocab_size, weights_folder);
-
-    printf("here")
-
+    
     // Build weights struct with device pointers
-    TransformerWeights& model_weights(
+    TransformerWeights model_weights(
         d_token_table,
         d_pos_table,
         qkv_weights,
@@ -221,7 +222,7 @@ int main() {
     );
 
     // Create model
-    MiniGPT& gpt_model(
+    MiniGPT gpt_model(
         block_size,
         n_heads,
         d_model,
@@ -249,12 +250,12 @@ int main() {
         gpt_model
     );
 
-    // printf("Text generation finished.\n");
+    printf("Text generation finished.\n");
 
-    // // Cleanup generation resources
+    // Cleanup generation resources
     // cleanup_generation_resources(d_gen_logits, d_gen_probs, d_selected_token, d_states);
     
-    // // Cleanup generation vocabulary and tokens
+    // Cleanup generation vocabulary and tokens
     // free(generation_prompt_tokens);
     // for (int i = 0; i < gen_vocab_size; i++) {
     //     if (gen_vocab[i]) {

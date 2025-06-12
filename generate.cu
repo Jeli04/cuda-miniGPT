@@ -162,7 +162,7 @@ void generate_tokens_contextual(
     PositionalEncodingResources& pos_resources,
     MiniGPT& gpt_model
 ) {
-    printf("\n=== TOKEN GENERATION WITH CONDITIONING CHECK ===\n");
+    printf("\n===TOKEN GENERATION WITH CONDITIONING CHECK ===\n");
     printf("here");
     double start_time = get_wall_time();
     printf("here");
