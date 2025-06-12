@@ -8,12 +8,11 @@
 __global__ void add_bias(const float* input, const float* bias, float* output, int total, int cols) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < total) {
-        int i = idx % cols;  // compute row
+        int i = idx % cols;
         output[idx] = input[idx] + bias[i];
     }
 }
 
-// 1d better since its coalesced
 __global__ void relu(float* a, int total_elements){
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < total_elements) {
@@ -52,11 +51,6 @@ void ffwd(
     relu<<<dim_grid, dim_block>>>(d_hidden_output, block_size * hidden_size);
     cudaDeviceSynchronize();
 
-    // output_h = (float*) malloc(sizeof(float) * block_size * hidden_size);
-    // cudaMemcpy(output_h, d_input, sizeof(float) * hidden_size * block_size, cudaMemcpyDeviceToHost);
-    // loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/ffwd_dump.txt";
-    // dumpMatrix(output_h, block_size, hidden_size, loc);
-
     // Second layer: hidden_size x output_size
     dim_block = dim3(BLOCK_SIZE, BLOCK_SIZE);
     dim_grid = dim3((d_model + BLOCK_SIZE - 1) / BLOCK_SIZE, (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
@@ -78,7 +72,7 @@ void ffwd(
 //     const int n_blocks = 6;
 //     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
-//     std::string folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
+//     std::string folder = "./weights_dump/";
 //     std::vector<std::string> ffwd_dump_path = get_ffwd_paths(n_blocks, folder);
 //     std::vector<float*> ffwd_weights = load_ffwd_weights(
 //         n_blocks,
@@ -106,7 +100,7 @@ void ffwd(
 
 //     float* output_h = (float*) malloc(sizeof(float) * block_size * n_heads * head_dim);
 //     cudaMemcpy(output_h, d_input, sizeof(float) * block_size * n_heads * head_dim, cudaMemcpyDeviceToHost);
-//     std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/ffwd_dump.txt";
+//     std::string loc = "./ffwd_dump.txt";
 //     dumpMatrix(output_h, block_size, n_heads * head_dim, loc);
 //     return 0;
 

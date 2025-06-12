@@ -1,6 +1,5 @@
 #pragma once
 
-// Structure to hold pre-allocated positional encoding resources
 struct PositionalEncodingResources {
     float* d_token_onehot;
     float* d_pos_onehot;

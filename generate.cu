@@ -21,7 +21,6 @@ double get_wall_time() {
     return (double)time.tv_sec + (double)time.tv_usec * .000001;
 }
 
-// Setup random states
 __global__ void setup_random_states(curandState* states, unsigned long seed, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -38,8 +37,8 @@ __global__ void multinomial_sample_kernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx != 0) return;
 
-    curandState localState = states[idx];  // Copy state locally
-    float coin = curand_uniform(&localState);  // Use local copy
+    curandState localState = states[idx];
+    float coin = curand_uniform(&localState);
 
     float cumulative_prob = 0.0f;
     int selected = 0;
@@ -56,7 +55,7 @@ __global__ void multinomial_sample_kernel(
         selected = vocab_size - 1;
     }
 
-    states[idx] = localState;  // Write state back to advance it
+    states[idx] = localState; 
     *selected_token = selected;
 }
 
@@ -69,7 +68,6 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
         char target_char = text[i];
         int token_id = -1;
         
-        // Find matching token
         for (int j = 0; j < vocab_size; j++) {
             if (vocab[j] && strlen(vocab[j]) == 1 && vocab[j][0] == target_char) {
                 token_id = j;
@@ -80,7 +78,6 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
         if (token_id >= 0) {
             token_ids[valid_tokens] = token_id;
         } else {
-            // Default to space token
             for (int j = 0; j < vocab_size; j++) {
                 if (vocab[j] && strlen(vocab[j]) == 1 && vocab[j][0] == ' ') {
                     token_ids[valid_tokens] = j;
@@ -94,58 +91,6 @@ int* text_to_tokens(char** vocab, int vocab_size, const char* text, int* num_tok
     *num_tokens = valid_tokens;
     return token_ids;
 }
-
-// void debug_conditioning(int* input_tokens, int input_length, 
-//     int* conditioned_tokens, int conditioned_length, 
-//     int block_size, char** vocab, int vocab_size) {
-// printf("\n=== CONDITIONING DEBUG ===\n");
-// printf("Input length: %d, Block size: %d\n", input_length, block_size);
-
-// printf("Original input tokens: ");
-// for (int i = 0; i < input_length; i++) {
-// printf("%d ", input_tokens[i]);
-// }
-// printf("\n");
-
-// printf("Original input text: '");
-// for (int i = 0; i < input_length; i++) {
-// if (input_tokens[i] >= 0 && input_tokens[i] < vocab_size && vocab[input_tokens[i]]) {
-// printf("%s", vocab[input_tokens[i]]);
-// }
-// }
-// printf("'\n");
-
-// printf("Conditioned tokens (%d): ", conditioned_length);
-// for (int i = 0; i < conditioned_length; i++) {
-// printf("%d ", conditioned_tokens[i]);
-// }
-// printf("\n");
-
-// printf("Conditioned text: '");
-// for (int i = 0; i < conditioned_length; i++) {
-// if (conditioned_tokens[i] >= 0 && conditioned_tokens[i] < vocab_size && vocab[conditioned_tokens[i]]) {
-// printf("%s", vocab[conditioned_tokens[i]]);
-// }
-// }
-// printf("'\n");
-
-// if (input_length > block_size) {
-// int start_idx = input_length - block_size;
-// printf("CONDITIONING APPLIED: Kept last %d tokens (skipped first %d)\n", 
-// block_size, start_idx);
-// printf("Skipped text: '");
-// for (int i = 0; i < start_idx; i++) {
-// if (input_tokens[i] >= 0 && input_tokens[i] < vocab_size && vocab[input_tokens[i]]) {
-// printf("%s", vocab[input_tokens[i]]);
-// }
-// }
-// printf("'\n");
-// } else {
-// printf("NO CONDITIONING NEEDED: Input fits within block_size\n");
-// }
-// printf("========================\n\n");
-// }
-
 
 void generate_tokens_contextual(
     int block_size,
@@ -165,9 +110,8 @@ void generate_tokens_contextual(
     printf("\n=== TOKEN GENERATION WITH CONDITIONING CHECK ===\n");
     double start_time = get_wall_time();
 
-    // ALLOCATE MEMORY ONCE, OUTSIDE THE LOOP
     float* d_logits;
-    cudaMalloc(&d_logits, vocab_size * sizeof(float));  // Only vocab_size, not block_size * vocab_size
+    cudaMalloc(&d_logits, vocab_size * sizeof(float));
     float* d_probs;
     cudaMalloc(&d_probs, vocab_size * sizeof(float));
     int* d_selected_token;
@@ -175,7 +119,6 @@ void generate_tokens_contextual(
     float* d_input;
     cudaMalloc(&d_input, block_size * d_model * sizeof(float));
 
-    // Apply conditioning once only 
     int* conditioned_tokens;
     int conditioned_length;
     
@@ -190,13 +133,11 @@ void generate_tokens_contextual(
         memcpy(conditioned_tokens, input_tokens, conditioned_length * sizeof(int));
     }
 
-    // Create sequence that will grow
     int max_seq_len = conditioned_length + max_new_tokens;
     int* token_sequence = (int*)malloc(max_seq_len * sizeof(int));
     memcpy(token_sequence, conditioned_tokens, conditioned_length * sizeof(int));
     int current_length = conditioned_length;
 
-    // Build initial text
     char* full_text = (char*)malloc(10000);
     strcpy(full_text, "");
     for (int i = 0; i < conditioned_length; i++) {
@@ -206,28 +147,24 @@ void generate_tokens_contextual(
     }
     printf("Starting text: '%s'\n", full_text);
 
-    // Generate tokens one by one
     for (int step = 0; step < max_new_tokens; step++) {
         printf("Step %d/%d: ", step + 1, max_new_tokens);
         
-        // Get current context (last block_size tokens)
         int context_start = (current_length > block_size) ? current_length - block_size : 0;
         int context_length = current_length - context_start;
         int* current_context = token_sequence + context_start;
         
         printf("Processing context of length %d... ", context_length);
 
-        // Clear d_input buffer
         cudaMemset(d_input, 0, block_size * d_model * sizeof(float));
 
-        // Forward pass through transformer with CORRECT parameters
         gpt_model.forward_pass(
-            conditioned_length, // seq_len
+            conditioned_length,
             max_seq_len,
             current_context,
             pos_resources,
             d_input,
-            d_logits,   // d_output
+            d_logits, 
             block_size,
             n_heads,
             d_model,
@@ -238,11 +175,9 @@ void generate_tokens_contextual(
 
         printf("Forward pass done, ");
 
-        // Apply softmax to get probabilities
         softmax(d_logits, d_probs, 1, vocab_size);
         printf("Softmax done, ");
 
-        // Sample next token
         unsigned long step_seed = time(NULL) + step * 1000 + current_length;
         setup_random_states<<<1, 1>>>(d_states, step_seed, 1);
         cudaDeviceSynchronize();
@@ -250,7 +185,6 @@ void generate_tokens_contextual(
         multinomial_sample_kernel<<<1, 1>>>(d_probs, d_selected_token, d_states, vocab_size);
         cudaDeviceSynchronize();
 
-        // Get result
         int next_token;
         cudaMemcpy(&next_token, d_selected_token, sizeof(int), cudaMemcpyDeviceToHost);
         
@@ -260,17 +194,14 @@ void generate_tokens_contextual(
         }
         printf("\n");
         
-        // Validate token
         if (next_token < 0 || next_token >= vocab_size) {
             printf("ERROR: Invalid token %d\n", next_token);
             break;
         }
 
-        // Add token to sequence
         token_sequence[current_length] = next_token;
         current_length++;
         
-        // Add to text
         if (vocab[next_token]) {
             strcat(full_text, vocab[next_token]);
         }
@@ -295,7 +226,7 @@ void generate_tokens_contextual(
 }
 
 // char** load_vocab_json(const char* filename, int* vocab_size) {
-//     *vocab_size = 128; // Increase to cover full ASCII range
+//     *vocab_size = 128;
 //     char** vocab = (char**)malloc(*vocab_size * sizeof(char*));
     
 //     // Create ASCII character vocabulary (0-127)
@@ -323,7 +254,6 @@ void generate_tokens_contextual(
     // printf("=== TRANSFORMER VALIDATION TEST ===\n");
     // printf("Loaded vocabulary: %d tokens\n", vocab_size);
     
-    // // Test configuration - match your Python model exactly
     // TransformerBlockCofig config;
     // config.block_size = 32;
     // config.n_heads = 4;
@@ -335,7 +265,6 @@ void generate_tokens_contextual(
     // printf("Config: block_size=%d, n_heads=%d, d_model=%d, head_dim=%d\n", 
     //        config.block_size, config.n_heads, config.d_model, config.head_dim);
     
-    // // Allocate device memory
     // float *d_input, *d_output, *d_residual;
     // float *d_logits, *d_probs;
     // int *d_selected_token;
@@ -355,13 +284,13 @@ void generate_tokens_contextual(
     
     // // Multiple test cases
     // const char* test_inputs[] = {
-    //     "Hi",                                          // Short (2 chars < 32)
-    //     "Hello world",                                // Medium (11 chars < 32)  
-    //     "This is a longer test sentence that should definitely exceed the block size limit of thirty-two characters and trigger conditioning",  // Long (>32 chars)
-    //     "A",                                          // Very short (1 char)
-    //     "The quick brown fox jumps over the lazy dog and then continues running for a very long time"  // Very long (>32 chars)
+    //     "Hi",                                         
+    //     "Hello world",                             
+    //     "very long text text text text text text text text text text text text text text text text text text text text text ", 
+    //     "A",                                         
+    //     "text text text text text text text text text text text text text text "
     // };
-    // int num_tests = sizeof(test_inputs) / sizeof(test_inputs[0]);
+    // int num_tests = sizeof(test_inputs) 
     
     // for (int test_idx = 0; test_idx < num_tests; test_idx++) {
     //     printf("\n=== TEST CASE %d ===\n", test_idx + 1);
@@ -375,11 +304,9 @@ void generate_tokens_contextual(
     //     }
     //     printf("\n");
         
-    //     // Reset random state for each test
     //     setup_random_states<<<(config.vocab_size + 255) / 256, 256>>>(d_states, fixed_seed + test_idx, config.vocab_size);
     //     cudaDeviceSynchronize();
         
-    //     // Generate with CUDA
     //     generate_tokens_contextual(
     //         input_tokens,
     //         input_length,
@@ -396,7 +323,6 @@ void generate_tokens_contextual(
     //     free(input_tokens);
     // }
     
-    // // Cleanup
     // cudaFree(d_input);
     // cudaFree(d_output);
     // cudaFree(d_residual);

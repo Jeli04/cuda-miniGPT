@@ -44,7 +44,7 @@ MiniGPT::MiniGPT(
 {}
 
 MiniGPT::~MiniGPT() {
-    // cleanup if needed
+
 }
 
 void MiniGPT::forward_pass(
@@ -73,8 +73,7 @@ void MiniGPT::forward_pass(
         &pos_resources
     );
 
-    // create residual copy
-    float* residual_copy; // for residual layer later
+    float* residual_copy;
     cudaMalloc(&residual_copy, sizeof(float)* block_size*d_model);
     cudaMemcpy(residual_copy, d_input, sizeof(float)* block_size*d_model, cudaMemcpyDeviceToDevice);
     

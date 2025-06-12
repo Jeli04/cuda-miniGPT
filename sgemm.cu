@@ -48,22 +48,19 @@ __global__ void mysgemm(int m, int n, int k, bool A_t, bool B_t, const float *A,
             As[threadIdx.y][threadIdx.x] = 0.0f;
         }
 
-        int B_stride = B_t ? k : n; // stride for B based on whether B is transposed or not
+        int B_stride = B_t ? k : n; 
         int B_col = B_t ? tile_idx * TILE_SIZE + threadIdx.y : col; 
         int B_row = B_t ? col : tile_idx * TILE_SIZE + threadIdx.y;
         if (B_row < (B_t ? n : k) && B_col < (B_t ? k : n)){
-            Bs[threadIdx.y][threadIdx.x] = B_ptr[B_row * B_stride + B_col];  // * stide (n or k) here since B is column major
+            Bs[threadIdx.y][threadIdx.x] = B_ptr[B_row * B_stride + B_col]; 
         }
         else{
             Bs[threadIdx.y][threadIdx.x] = 0.0f;
         }
 
-        // synchronize to make sure the data is loaded
         __syncthreads();
 
-        // dot product of the column and row in the tile
         for(int i = 0; i < TILE_SIZE; i++) {
-            // compute the value of C
             Cvalue += As[threadIdx.y][i] * Bs[i][threadIdx.x];
         }
         __syncthreads();

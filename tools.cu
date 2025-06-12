@@ -102,7 +102,7 @@ std::vector<std::string> get_lm_head_paths(const std::string& folder) {
 }
 
 float* loadMatrix(int rows, int cols, std::string& source){
-    float* data = new float[rows * cols]; // or float data[rows * cols];
+    float* data = new float[rows * cols];
   
     std::ifstream infile(source);
     if (!infile) {
@@ -124,11 +124,7 @@ float* loadMatrix(int rows, int cols, std::string& source){
         ++row;
     }
 
-    printf("Loaded matrix from %s: %d x %d\n", source.c_str(), rows, cols);
-  
-    // for (int i = 0; i < std::min(5, rows * cols); ++i)
-    //     std::cout << data[i] << " ";
-    // std::cout << std::endl;
+
     return data;
 }
 
@@ -138,9 +134,6 @@ void loadQKVCombined(
     int rows, 
     int cols
 ){
-    // This function loads the pretrained QKV weights from the disk on host 
-    // and combines them into a single matrix for each head.
-    // This is a host function, so it will not be run on the device.
 
     std::ifstream infile(source);
     if (!infile) {
@@ -185,7 +178,6 @@ void dumpMatrix(float* matrix, int rows, int cols, const std::string& destinatio
 void printMatrix(float* matrix, int rows, int cols) {
     for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < cols; ++c) {
-            // printf("%.4f ", matrix[r * cols + c]);
             printf("Row %d, Col %d: %.4f ", r, c, matrix[r * cols + c]);        
         }
         printf("\n");
@@ -209,24 +201,20 @@ std::vector<float*> load_qkv_weights(
         float* h_K_w = h_W_qkv + head_dim *  n_heads * d_model;
         float* h_V_w = h_W_qkv + 2 * head_dim * n_heads * d_model;
 
-        // load the QKV weights for block b
         for(int i = 0; i < n_heads; i++) {
             int base = 3 * n_heads * b + 3 * i;
             loadQKVCombined(weights_dump[base + 0], h_Q_w + i * head_dim * d_model, head_dim, d_model);
             loadQKVCombined(weights_dump[base + 1], h_K_w + i * head_dim * d_model, head_dim, d_model);
             loadQKVCombined(weights_dump[base + 2], h_V_w + i * head_dim * d_model, head_dim, d_model);
-            // printf("%s\n", weights_dump[base + 0].c_str());
-            // printf("%s\n", weights_dump[base + 1].c_str());
-            // printf("%s\n", weights_dump[base + 2].c_str());
         }
 
         float* d_W_qkv;
         cudaMalloc(&d_W_qkv, sizeof(float) * d_model * n_heads * head_dim * 3);
         cudaMemcpy(d_W_qkv, h_W_qkv, sizeof(float) * d_model * n_heads * head_dim * 3, cudaMemcpyHostToDevice);
         all_weights[b] = d_W_qkv;
-        cudaFreeHost(h_W_qkv);  // free the host
+        cudaFreeHost(h_W_qkv);  
     }
-    return all_weights; // returns a host-side vector of device pointers
+    return all_weights; 
 }
 
 
@@ -248,7 +236,6 @@ std::vector<float*> load_layernorm_weights(
         cudaMemcpy(d_gamma, h_gamma, sizeof(float) * n_heads * head_dim * d_model, cudaMemcpyHostToDevice);
         all_weights[2 * b] = d_gamma;
 
-        // Beta
         std::string beta_path = weights_dump[2 * b + 1];
         printf("Loading beta from %s\n", beta_path.c_str());
         float* h_beta = loadMatrix(d_model, 1, beta_path);
@@ -258,7 +245,7 @@ std::vector<float*> load_layernorm_weights(
         all_weights[2 * b + 1] = d_beta;
     }
 
-    return all_weights; // returns a host-side vector of device pointers
+    return all_weights;
 }
 
 
@@ -272,7 +259,6 @@ std::vector<float*> load_ffwd_weights(
     for(int b = 0; b < n_blocks; b++){
         // b1
         std::string b1_path = weights_dump[4 * b + 0];
-        // printf("Loading b1 from %s\n", b1_path.c_str());
         float* h_b1 = loadMatrix(hidden_dim, 1, b1_path);
         float* d_b1;
         cudaMalloc(&d_b1, sizeof(float) * hidden_dim);
@@ -281,7 +267,6 @@ std::vector<float*> load_ffwd_weights(
 
         // w1
         std::string w1_path = weights_dump[4 * b + 1];
-        // printf("Loading W1 from %s\n", w1_path.c_str());
         float* h_w1 = loadMatrix(hidden_dim, d_model, w1_path);
         float* d_w1;
         cudaMalloc(&d_w1, sizeof(float) * hidden_dim * d_model);
@@ -290,7 +275,6 @@ std::vector<float*> load_ffwd_weights(
 
         // b2
         std::string b2_path = weights_dump[4 * b + 2];
-        // printf("Loading b2 from %s\n", b2_path.c_str());
         float* h_b2 = loadMatrix(d_model, 1, b2_path);
         float* d_b2;
         cudaMalloc(&d_b2, sizeof(float) * d_model);
@@ -299,7 +283,6 @@ std::vector<float*> load_ffwd_weights(
 
         // w2
         std::string w2_path = weights_dump[4 * b + 3];
-        // printf("Loading W2 from %s\n", w2_path.c_str());
         float* h_w2 = loadMatrix(d_model, hidden_dim, w2_path);
         float* d_w2;
         cudaMalloc(&d_w2, sizeof(float) * d_model * hidden_dim);
@@ -307,7 +290,7 @@ std::vector<float*> load_ffwd_weights(
         all_weights[4 * b + 3] = d_w2;
     }
 
-    return all_weights; // Host vector of device pointers
+    return all_weights; 
 }
 
 
@@ -367,7 +350,7 @@ std::vector<float*> load_lm_head_weights(
     int d_model,
     const std::vector<std::string>& weights_dump
 ) {
-    std::vector<float*> all_weights(2); // bias and weight
+    std::vector<float*> all_weights(2); 
 
     // Bias
     std::string bias_path = weights_dump[0];

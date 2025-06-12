@@ -9,7 +9,7 @@
 
 
 float* loadMatrix(int rows, int cols, std::string& source){
-  float* data = new float[rows * cols]; // or float data[rows * cols];
+  float* data = new float[rows * cols];
 
   std::ifstream infile(source);
   if (!infile) {
@@ -38,14 +38,14 @@ float* loadMatrix(int rows, int cols, std::string& source){
   return data;
 }
 
-int main() {
+/*int main() {
   const int rows = 84;
   const int cols = 128;
-  std::string folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
+  std::string folder = "./weights_dump/";
   std::string file = "token_embedding_table.weight.txt";
   std::string source = folder + file;
 
-  float* h_A = loadMatrix(rows, cols, source); // load the data
+  float* h_A = loadMatrix(rows, cols, source); 
 
   float h_B[cols * rows], h_C[rows * rows];
   // fill dummy values
@@ -78,29 +78,24 @@ int main() {
 
   cudaMemcpy(h_C, d_C, rows*rows*sizeof(float), cudaMemcpyDeviceToHost);
 
-  // allocate a row-major copy
   float* C_row = new float[rows * rows];
 
-  // transpose from column-major h_C into row-major C_row
   for (int r = 0; r < rows; ++r) {
     for (int c = 0; c < rows; ++c) {
-      // h_C is column-major, so element (r,c) lives at h_C[ c*rows + r ]
       C_row[r * rows + c] = h_C[c * rows + r];
     }
   }
 
-  // now you can print the first 5 in true row-major order:
   for (int i = 0; i < 5; ++i) {
     std::cout << C_row[i] << " ";
   }
   std::cout << std::endl;
 
-  // cleanup
   delete[] C_row;
   cublasDestroy(handle);
   cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
   return 0;
-}
+}*/
 
 
 

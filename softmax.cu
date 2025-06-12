@@ -15,7 +15,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
   int block_size = blockDim.x;
   const float* x = input + row_idx * cols;
 
-  // get the max values with coarsing + reduce (regular reduction)
   float max_val = -INFINITY;
   for (unsigned int i = tid; i < cols; i+=block_size){
     max_val = fmaxf(max_val, x[i]);
@@ -23,7 +22,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
 
   shared[tid] = max_val;
 
-  // reduce (we do / 2 since we are reducing the array by 2 at each step)
   for(unsigned int stride = block_size / 2; stride>=1; stride /= 2){
     __syncthreads();
 
@@ -33,7 +31,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
   }
   __syncthreads();
 
-  // numerator expoential value
   float max_offest = shared[0];
 
   for(unsigned int i = tid; i < cols; i+=block_size){
@@ -42,7 +39,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
 
   __syncthreads();
 
-  // get the sum values + reduce (coarse reduction)
   x = output + row_idx * cols;
   float sum_val = 0.0f;
 
@@ -51,7 +47,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
   }
   shared[tid] = sum_val; 
 
-  // reduce (we do / 2 since we are reducing the array by 2 at each step)
   for(unsigned int stride = block_size / 2; stride>=1; stride /= 2){
     __syncthreads();
 
@@ -60,7 +55,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
     }
   }  
 
-  // divide numerator by denominator
   __syncthreads();
   float sum = shared[0];
   for (unsigned int i = tid; i < cols; i+=block_size){
@@ -75,7 +69,7 @@ void softmax(
     int rows,
     int cols
 ){
-  int BLOCK_SIZE = 16; // length of the row
+  int BLOCK_SIZE = 16; 
   dim3 grid(rows);
   dim3 block(BLOCK_SIZE);
 

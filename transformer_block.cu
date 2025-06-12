@@ -66,7 +66,6 @@ __global__ void add_residual(const float* a, const float* b, float* out, int row
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
     if (i < rows && j < cols) {
-        // printf("i: %d, j: %d\n", i, j);
         out[i * cols + j] = a[i * cols + j] + b[i * cols + j];
     } 
 }
@@ -77,7 +76,7 @@ __global__ void apply_causal_mask(float* attn_scores, int block_size) {
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (row < block_size && col < block_size) {
-        if (col > row) {  // Upper triangular part (future positions)
+        if (col > row) {  
             attn_scores[row * block_size + col] = -INFINITY;
         }
     }
@@ -148,7 +147,7 @@ void multi_head_attention(
 ) {
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
-    // do the QKV projeection in one matrix operation
+    // doing the QKV projeection in one matrix operation
     float* d_qkv_proj;
     cudaMalloc(&d_qkv_proj, sizeof(float) * block_size* 3 * d_model);
 
@@ -196,21 +195,12 @@ void multi_head_attention(
     heads_to_rows<<<(block_size* num_heads* head_dim + BLOCK_SIZE-1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_head_out, d_concat, block_size, num_heads, head_dim);
     cudaDeviceSynchronize();
 
-    // float* output_h = (float*) malloc(block_size* num_heads* head_dim * sizeof(float));
-    // cudaMemcpy(output_h, d_concat, block_size* num_heads* head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-    // std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output2.txt";
-    // dumpMatrix(output_h, block_size, num_heads* head_dim, loc);
-
     dim3 blk2(16, 16);
     dim3 grd2((d_model + 15)/16, (block_size+ 15)/16);
     mysgemm<<<grd2, blk2>>>(block_size, d_model, num_heads* head_dim, false, true, d_concat, o_proj_w, d_output);
     cudaDeviceSynchronize();
 
-    // output_h = (float*) malloc(block_size* num_heads* head_dim * sizeof(float));
-    // cudaMemcpy(output_h, d_output, block_size* num_heads* head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-    // loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output3.txt";
-    // dumpMatrix(output_h, block_size, num_heads* head_dim, loc);
-
+    
     int add_blocks = (block_size* d_model + BLOCK_SIZE - 1) / BLOCK_SIZE;
     add_bias<<<add_blocks, BLOCK_SIZE>>>(
         d_output,
@@ -220,11 +210,6 @@ void multi_head_attention(
         d_model
     );
     cudaDeviceSynchronize();
-
-    // output_h = (float*) malloc(block_size* num_heads* head_dim * sizeof(float));
-    // cudaMemcpy(output_h, d_output, block_size* num_heads* head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-    // loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output.txt";
-    // dumpMatrix(output_h, block_size, num_heads* head_dim, loc);
 
     cudaFree(d_qkv_proj);
     cudaFree(d_Q);
@@ -270,7 +255,6 @@ void transformer_decoder(
         );
         cudaDeviceSynchronize();
 
-        // Multi-head attention
         multi_head_attention(
             block_size, n_heads, d_model, head_dim,
             qkv_weights[b],
@@ -289,7 +273,6 @@ void transformer_decoder(
         );
         cudaDeviceSynchronize();
 
-        // Copy new residual
         cudaMemcpy(residual_copy, d_output, sizeof(float) * block_size * d_model, cudaMemcpyDeviceToDevice);
 
         // Layer norm 2
@@ -301,7 +284,6 @@ void transformer_decoder(
         );
         cudaDeviceSynchronize();
 
-        // Feed forward
         ffwd(
             d_output, block_size, d_model, d_model * 4,
             ffwd_weights[b * 4],
@@ -310,7 +292,6 @@ void transformer_decoder(
             ffwd_weights[b * 4 + 3]
         );
 
-        // Residual
         add_residual<<<res_grid, res_block>>>(
             residual_copy, d_output, d_output,
             block_size, n_heads * head_dim

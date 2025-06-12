@@ -13,13 +13,11 @@ void initialize_positional_encoding_resources(
     resources->vocab_size = vocab_size;
     resources->d_model = d_model;
     
-    // Allocate device memory for maximum possible sequence length
     cudaMalloc(&resources->d_token_onehot, max_seq_len * vocab_size * sizeof(float));
     cudaMalloc(&resources->d_pos_onehot, max_seq_len * max_seq_len * sizeof(float));
     cudaMalloc(&resources->d_token_embeddings, max_seq_len * d_model * sizeof(float));
     cudaMalloc(&resources->d_pos_embeddings, max_seq_len * d_model * sizeof(float));
     
-    // Allocate host memory for maximum possible sequence length
     resources->h_token_onehot = (float*)calloc(max_seq_len * vocab_size, sizeof(float));
     resources->h_pos_onehot = (float*)calloc(max_seq_len * max_seq_len, sizeof(float));
     
