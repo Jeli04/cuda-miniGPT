@@ -12,7 +12,6 @@
 #include "softmax.h"
 #include "tools.h"
 
-#define VOCAB_SIZE 84
 
 double get_wall_time() {
     struct timeval time;
@@ -39,8 +38,8 @@ __global__ void multinomial_sample_kernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx != 0) return;
 
-    curandState* state = &states[idx];
-    float coin = curand_uniform(state);
+    curandState localState = states[idx];  // Copy state locally
+    float coin = curand_uniform(&localState);  // Use local copy
 
     float cumulative_prob = 0.0f;
     int selected = 0;
@@ -57,6 +56,7 @@ __global__ void multinomial_sample_kernel(
         selected = vocab_size - 1;
     }
 
+    states[idx] = localState;  // Write state back to advance it
     *selected_token = selected;
 }
 
@@ -243,6 +243,10 @@ void generate_tokens_contextual(
         printf("Softmax done, ");
 
         // Sample next token
+        unsigned long step_seed = time(NULL) + step * 1000 + current_length;
+        setup_random_states<<<1, 1>>>(d_states, step_seed, 1);
+        cudaDeviceSynchronize();
+
         multinomial_sample_kernel<<<1, 1>>>(d_probs, d_selected_token, d_states, vocab_size);
         cudaDeviceSynchronize();
 
