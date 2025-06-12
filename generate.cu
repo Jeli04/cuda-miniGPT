@@ -163,23 +163,19 @@ void generate_tokens_contextual(
     MiniGPT& gpt_model
 ) {
     printf("\n===TOKEN GENERATION WITH CONDITIONING CHECK ===\n");
-    printf("here");
     double start_time = get_wall_time();
-    printf("here");
 
     float* d_logits;
     cudaMalloc(&d_logits, block_size * vocab_size * sizeof(float));
     float* d_probs;
     cudaMalloc(&d_probs, vocab_size * sizeof(float));
 
-    printf("here");
 
     int* conditioned_tokens;
     int conditioned_length;
     char* full_text = (char*)malloc(10000);
     strcpy(full_text, "");
     int* token_sequence;
-
 
     // Generate tokens one by one
     for (int step = 0; step < max_new_tokens; step++) {
@@ -229,9 +225,9 @@ void generate_tokens_contextual(
 
         // forward call from transformer
         gpt_model.forward_pass(
-            block_size, // seq_len
+            conditioned_length, // seq_len
             max_seq_len,
-            token_sequence,
+            conditioned_tokens,
             pos_resources,
             d_input,
             d_logits,   // d_output

@@ -1,3 +1,4 @@
+nvcc -c generate.cu -o generate.o
 nvcc -c minigptinference.cu -o minigptinference.o
 nvcc minigptinference.o minigpt.o transformer_block.o positional_encoding.o softmax.o sgemm.o generate.o ffwd.o tools.o positional_encoding_resources.o layer_norm.o \
     -o minigptinference \

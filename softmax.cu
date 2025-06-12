@@ -37,7 +37,6 @@ __global__ void softmax_kernel(float* input, float* output, int rows, int cols) 
   float max_offest = shared[0];
 
   for(unsigned int i = tid; i < cols; i+=block_size){
-    // printf("here \n");
     output[row_idx * cols + i] = expf(x[i] - max_offest);
   }
 

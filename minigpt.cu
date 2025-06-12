@@ -61,6 +61,15 @@ void MiniGPT::forward_pass(
     int n_blocks,
     int vocab_size
 ) {
+    // Optional sanity checks
+    if (!d_input || !weights.d_token_table || !weights.d_pos_table || !h_tokens) {
+        fprintf(stderr, "Error: one of the data pointers is null!\n");
+        return;
+    }
+    if (seq_len > max_seq_len) {
+        fprintf(stderr, "Error: seq_len (%d) > max_seq_len (%d)\n", seq_len, max_seq_len);
+        return;
+    }
     embed_sequence_sgemm(
         d_input,
         weights.d_token_table,
@@ -72,6 +81,8 @@ void MiniGPT::forward_pass(
         max_seq_len,
         &pos_resources
     );
+
+    printf("after embedding\n");
 
     // create residual copy
     float* residual_copy; // for residual layer later
