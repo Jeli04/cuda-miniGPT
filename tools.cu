@@ -371,6 +371,7 @@ std::vector<float*> load_lm_head_weights(
 
     // Bias
     std::string bias_path = weights_dump[0];
+    printf("Loading bias from %s\n", bias_path.c_str());
     float* h_bias = loadMatrix(vocab_size, 1, bias_path);
     float* d_bias;
     cudaMalloc(&d_bias, sizeof(float) * vocab_size);

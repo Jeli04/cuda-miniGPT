@@ -191,7 +191,7 @@ int main() {
     }
 
     // Load embeddings from files
-    std::string weights_folder = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/weights_dump/";
+    std::string weights_folder = "./weights_dump/";
     std::string location = weights_folder + "token_embedding_table.weight.txt";
     float* h_token_table = loadMatrix(vocab_size, d_model, location);
     location = weights_folder + "position_embedding_table.weight.txt";
