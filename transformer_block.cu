@@ -29,41 +29,11 @@ __global__ void splitQKV_vertical(const float* QKV, float* Q, float* K, float* V
     }
 }
 
-__global__ void splitQKV_horizontal(
-    const float* __restrict__ QKV, 
-    float* __restrict__ Q,        
-    float* __restrict__ K,
-    float* __restrict__ V,
-    int block_size,
-    int head_dim,
-    int n_heads)
-{
-    int total = block_size * head_dim * n_heads;
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= total) return;
-
-    int col_out = idx % block_size;
-    int row_out = idx / block_size;
-
-    int head = row_out / head_dim;
-    int d = row_out % head_dim;
-
-    int row_stride_in = 3 * n_heads * head_dim;
-    int q_col_in = head * head_dim + d;
-    int k_col_in = n_heads * head_dim + head * head_dim + d;
-    int v_col_in = 2 * n_heads * head_dim + head * head_dim + d;
-
-    const float* row_ptr = QKV + col_out * row_stride_in;
-    Q[idx] = row_ptr[q_col_in];
-    K[idx] = row_ptr[k_col_in];
-    V[idx] = row_ptr[v_col_in];
-}
-
 __global__ void combineQKV(
-    const float* q_w,   // [head_dim × d_model]
-    const float* k_w,   // [head_dim × d_model]
-    const float* v_w,   // [head_dim × d_model]
-    float* QKV_w,   // [d_model × (3*head_dim)]
+    const float* q_w, // [head_dim × d_model]
+    const float* k_w, // [head_dim × d_model]
+    const float* v_w, // [head_dim × d_model]
+    float* QKV_w, // [d_model × (3*head_dim)]
     int d_model,
     int head_dim
 ) {
@@ -101,6 +71,7 @@ __global__ void add_residual(const float* a, const float* b, float* out, int row
     } 
 }
 
+// masking function
 __global__ void apply_causal_mask(float* attn_scores, int block_size) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -111,87 +82,157 @@ __global__ void apply_causal_mask(float* attn_scores, int block_size) {
         }
     }
 }
+
+// helper function
+inline dim3 make_1d_grid(int N, int block=256)
+{
+    return dim3( (N + block - 1) / block );
+}
+
+// splits into seperate Q, K, V matrices
+__global__ void split_qkv(
+    const float* QKV,
+    float* Q,
+    float* K,
+    float* V,
+    int seq_len, 
+    int n_heads, 
+    int head_dim)
+{
+    const int total = seq_len * n_heads * head_dim;
+    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= total) return;
+
+    const int d = tid % head_dim;  // depth within head
+    const int s = (tid / head_dim) % seq_len;  // sequence position
+    const int h = tid / (head_dim * seq_len); // which head
+    const int col_q = h * head_dim + d;
+    const int col_k = n_heads*head_dim + h * head_dim + d;
+    const int col_v = 2*n_heads*head_dim + h * head_dim + d;
+
+    // source row pointer (row major)
+    const float* src_row = QKV + s * (3*n_heads*head_dim);   
+
+    Q[tid] = src_row[col_q];
+    K[tid] = src_row[col_k];
+    V[tid] = src_row[col_v];
+}
+
+// reshapes
+__global__ void heads_to_rows(
+    const float* heads,  // [num_heads, block_size, head_dim] contiguous
+    float* rows, // [block_size, num_heads*head_dim]
+    int block_size, int num_heads, int head_dim)
+{
+    const int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = block_size* num_heads* head_dim;
+    if (tid >= total) return;
+
+    const int d = tid % head_dim;
+    const int h = (tid / head_dim) % num_heads;
+    const int s =  tid / (head_dim * num_heads);
+
+    rows[s * (num_heads* head_dim) + h * head_dim + d] = heads[h * block_size* head_dim + s * head_dim + d]; 
+}
+
 void multi_head_attention(
     int block_size,
     int num_heads,
     int d_model,
     int head_dim,
-    const float* qkv_w, 
-    const float* o_proj_w, 
-    const float* o_proj_b, 
+    const float* qkv_w,
+    const float* o_proj_w,
+    const float* o_proj_b,
     float* d_input,
     float* d_output
-){
+) {
     const unsigned int BLOCK_SIZE = TILE_SIZE;
 
-    // QKV projection: (block_size, 3*num_heads*head_dim)
+    // do the QKV projeection in one matrix operation
     float* d_qkv_proj;
-    cudaMalloc(&d_qkv_proj, sizeof(float) * block_size * 3 * num_heads * head_dim);
-    dim3 dim_block(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dim_grid((3 * num_heads * head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE,
-                  (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    mysgemm<<<dim_grid, dim_block>>>(block_size, 3 * num_heads * head_dim, d_model, false, true, d_input, qkv_w, d_qkv_proj);
+    cudaMalloc(&d_qkv_proj, sizeof(float) * block_size* 3 * d_model);
+
+    dim3 blk(BLOCK_SIZE,BLOCK_SIZE);
+    dim3 grd((3 * d_model + BLOCK_SIZE-1)/BLOCK_SIZE, (block_size+ BLOCK_SIZE-1)/BLOCK_SIZE);
+    mysgemm<<<grd, blk>>>(block_size, 3 * d_model, d_model, false, true, d_input, qkv_w, d_qkv_proj);
     cudaDeviceSynchronize();
 
-    // Split QKV into Q, K, V
     float *d_Q, *d_K, *d_V;
-    cudaMalloc(&d_Q, sizeof(float) * block_size * num_heads * head_dim);
-    cudaMalloc(&d_K, sizeof(float) * block_size * num_heads * head_dim);
-    cudaMalloc(&d_V, sizeof(float) * block_size * num_heads * head_dim);
-    dim3 split_block(BLOCK_SIZE);
-    dim3 split_grid((block_size * num_heads * head_dim + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    splitQKV_horizontal<<<split_grid, split_block>>>(
-        d_qkv_proj, d_Q, d_K, d_V, block_size, head_dim, num_heads
+    cudaMalloc(&d_Q, sizeof(float)*num_heads* block_size* head_dim);
+    cudaMalloc(&d_K, sizeof(float)*num_heads* block_size* head_dim);
+    cudaMalloc(&d_V, sizeof(float)*num_heads* block_size* head_dim);
+
+    dim3 split_grid = make_1d_grid(num_heads* block_size* head_dim);
+    split_qkv<<<split_grid, BLOCK_SIZE >>>(d_qkv_proj, d_Q, d_K, d_V, block_size, num_heads, head_dim);
+    cudaDeviceSynchronize();
+
+    float* d_scores;
+    float* d_head_out;
+    cudaMalloc(&d_scores, sizeof(float) * num_heads* block_size* block_size);
+    cudaMalloc(&d_head_out, sizeof(float) * num_heads* block_size* head_dim);
+
+    for (int h = 0; h < num_heads; ++h) {
+        const float* Qh = d_Q + h * block_size* head_dim;
+        const float* Kh = d_K + h * block_size* head_dim;
+        const float* Vh = d_V + h * block_size* head_dim;
+        float* Sh = d_scores + h * block_size* block_size;
+        float* Oh = d_head_out + h * block_size* head_dim;
+
+        basicSgemm(block_size, block_size, head_dim, false, true, Qh, Kh, Sh);
+
+        dim3 mask_block(BLOCK_SIZE, BLOCK_SIZE);
+        dim3 mask_grid((block_size+ BLOCK_SIZE - 1) / BLOCK_SIZE, (block_size+ BLOCK_SIZE - 1) / BLOCK_SIZE);
+        apply_causal_mask<<<mask_grid, mask_block>>>(Sh, block_size);
+        cudaDeviceSynchronize();
+
+        matrixMultiplyConstant<<<make_1d_grid(block_size* block_size), BLOCK_SIZE>>>(Sh, 1.f / sqrtf((float)head_dim), block_size* block_size);
+        softmax(Sh, Sh, block_size, block_size);
+
+        basicSgemm(block_size, head_dim, block_size, false, false, Sh, Vh, Oh);
+    }
+
+    float* d_concat;
+    cudaMalloc(&d_concat, sizeof(float) * block_size* num_heads* head_dim);
+    heads_to_rows<<<(block_size* num_heads* head_dim + BLOCK_SIZE-1) / BLOCK_SIZE, BLOCK_SIZE>>>(d_head_out, d_concat, block_size, num_heads, head_dim);
+    cudaDeviceSynchronize();
+
+    // float* output_h = (float*) malloc(block_size* num_heads* head_dim * sizeof(float));
+    // cudaMemcpy(output_h, d_concat, block_size* num_heads* head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    // std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output2.txt";
+    // dumpMatrix(output_h, block_size, num_heads* head_dim, loc);
+
+    dim3 blk2(16, 16);
+    dim3 grd2((d_model + 15)/16, (block_size+ 15)/16);
+    mysgemm<<<grd2, blk2>>>(block_size, d_model, num_heads* head_dim, false, true, d_concat, o_proj_w, d_output);
+    cudaDeviceSynchronize();
+
+    // output_h = (float*) malloc(block_size* num_heads* head_dim * sizeof(float));
+    // cudaMemcpy(output_h, d_output, block_size* num_heads* head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    // loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output3.txt";
+    // dumpMatrix(output_h, block_size, num_heads* head_dim, loc);
+
+    int add_blocks = (block_size* d_model + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    add_bias<<<add_blocks, BLOCK_SIZE>>>(
+        d_output,
+        o_proj_b,
+        d_output,
+        block_size* d_model,
+        d_model
     );
     cudaDeviceSynchronize();
 
-    int stride_h = block_size * head_dim;
-    for (int h = 0; h < num_heads; h++) {
-        float* d_Qh = d_Q + h * stride_h;
-        float* d_Kh = d_K + h * stride_h;
-        float* d_Vh = d_V + h * stride_h;
-        float* Oh = d_output + h * stride_h;
+    // output_h = (float*) malloc(block_size* num_heads* head_dim * sizeof(float));
+    // cudaMemcpy(output_h, d_output, block_size* num_heads* head_dim * sizeof(float), cudaMemcpyDeviceToHost);
+    // loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output.txt";
+    // dumpMatrix(output_h, block_size, num_heads* head_dim, loc);
 
-        // Attention scores (block_size x block_size)
-        float* attn_scores;
-        cudaMalloc(&attn_scores, sizeof(float) * block_size * block_size);
-        basicSgemm(block_size, block_size, head_dim, false, true, d_Qh, d_Kh, attn_scores);
-        cudaDeviceSynchronize();
-
-        // Scale and softmax
-        float scale = 1.0f / sqrtf((float)head_dim);
-        matrixMultiplyConstant<<<(block_size * block_size + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(
-            attn_scores, scale, block_size * block_size
-        );
-        cudaDeviceSynchronize();
-        softmax(attn_scores, attn_scores, block_size, block_size);
-
-        // Weighted sum of values
-        basicSgemm(block_size, head_dim, block_size, false, false, attn_scores, d_Vh, Oh);
-        cudaDeviceSynchronize();
-
-        cudaFree(attn_scores);
-    }
-
-    // Output projection
-    dim3 proj_block(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 proj_grid((d_model + BLOCK_SIZE - 1) / BLOCK_SIZE,
-                   (block_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
-    mysgemm<<<proj_grid, proj_block>>>(block_size, d_model, num_heads * head_dim, false, true, d_output, o_proj_w, d_output);
-    cudaDeviceSynchronize();
-
-    // Optionally, add output projection bias if provided
-    if (o_proj_b) {
-        int blocks = (block_size * d_model + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        add_bias<<<blocks, BLOCK_SIZE>>>(d_output, o_proj_b, d_output, block_size * d_model, d_model);
-        cudaDeviceSynchronize();
-    }
-
-    // Free memory
+    cudaFree(d_qkv_proj);
     cudaFree(d_Q);
     cudaFree(d_K);
     cudaFree(d_V);
-    cudaFree(d_qkv_proj);
+    cudaFree(d_scores);
+    cudaFree(d_head_out);
+    cudaFree(d_concat);
 }
 
 
