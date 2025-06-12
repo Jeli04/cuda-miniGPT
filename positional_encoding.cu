@@ -6,8 +6,8 @@
 #include "positional_encoding.h"
 
 __global__ void add_embeddings(const float* token_emb, const float* pos_emb, float* output, int seq_len, int d_model) {
-    int i = blockIdx.y * blockDim.y + threadIdx.y; // sequence position
-    int j = blockIdx.x * blockDim.x + threadIdx.x; // embedding dimension
+    int i = blockIdx.y * blockDim.y + threadIdx.y; 
+    int j = blockIdx.x * blockDim.x + threadIdx.x; 
     
     if (i < seq_len && j < d_model) {
         output[i * d_model + j] = token_emb[i * d_model + j] + pos_emb[i * d_model + j];

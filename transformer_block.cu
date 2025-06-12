@@ -70,7 +70,6 @@ __global__ void add_residual(const float* a, const float* b, float* out, int row
     } 
 }
 
-// masking function
 __global__ void apply_causal_mask(float* attn_scores, int block_size) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -82,13 +81,11 @@ __global__ void apply_causal_mask(float* attn_scores, int block_size) {
     }
 }
 
-// helper function
 inline dim3 make_1d_grid(int N, int block=256)
 {
     return dim3( (N + block - 1) / block );
 }
 
-// splits into seperate Q, K, V matrices
 __global__ void split_qkv(
     const float* QKV,
     float* Q,
@@ -117,7 +114,6 @@ __global__ void split_qkv(
     V[tid] = src_row[col_v];
 }
 
-// reshapes
 __global__ void heads_to_rows(
     const float* heads,  // [num_heads, block_size, head_dim] contiguous
     float* rows, // [block_size, num_heads*head_dim]
