@@ -62,30 +62,7 @@ void embed_sequence_sgemm(
     cudaDeviceSynchronize();
 }
 
-// Backward compatibility: original function that allocates resources internally
-void embed_sequence_sgemm(
-    float* d_output,           // [seq_len, d_model]
-    const float* d_token_table, // [vocab_size, d_model] 
-    const float* d_pos_table,   // [max_seq_len, d_model]
-    const int* h_token_sequence, // [seq_len] - host memory
-    int seq_len,
-    int d_model,
-    int vocab_size,
-    int max_seq_len
-) {
-    // Create temporary resources for this call
-    PositionalEncodingResources temp_resources;
-    initialize_positional_encoding_resources(&temp_resources, max_seq_len, vocab_size, d_model);
-    
-    // Use the optimized version
-    embed_sequence_sgemm(
-        d_output, d_token_table, d_pos_table, h_token_sequence,
-        seq_len, d_model, vocab_size, max_seq_len, &temp_resources
-    );
-    
-    // Cleanup temporary resources
-    // cleanup_positional_encoding_resources(&temp_resources);
-}
+
 
 // Test function using sgemm with pre-allocated resources
 void test_positional_encoding_sgemm() {

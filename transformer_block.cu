@@ -323,7 +323,7 @@ void transformer_decoder(
 
         float* output_h = (float*) malloc(block_size *  n_heads * head_dim * sizeof(float));
         cudaMemcpy(output_h, d_output, block_size *  n_heads * head_dim * sizeof(float), cudaMemcpyDeviceToHost);
-        std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/test.txt";
+        std::string loc = "./test.txt";
         dumpMatrix(output_h, block_size, n_heads * head_dim, loc);
     
     }
@@ -353,7 +353,7 @@ void transformer_decoder(
     float* output_h = (float*) malloc(sizeof(float) * block_size * vocab_size);
     cudaMemcpy(output_h, d_output, sizeof(float) * block_size * vocab_size, cudaMemcpyDeviceToHost);
     // printMatrix(h_input, block_size, n_heads * head_dim);
-    std::string loc = "/home/csmaj/jeli/final-project-sp2025-guys-performing-transformations-gpt/block_output.txt";
+    std::string loc = "./block_output.txt";
     dumpMatrix(output_h, block_size, vocab_size, loc);
 }
 
