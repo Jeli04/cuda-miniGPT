@@ -1,11 +1,44 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/5-zirqst)
+<p align="center">
+  <img src="images/miniGPT.png" alt="miniGPT" width="500"/>
+</p>
 
+<p align="center">
+  <b>Tech Stack:</b> CUDA C++ · PyTorch (for reference) · Jupyter Notebook
+</p>
 
-do this for setting up 
-git clone https://github.com/NVIDIA/cutlass.git extern/cutlass
+---
 
-run the enviorment 
-apptainer shell --nv /singularity/cs217/cs217.2024-12-12.sif
+# miniGPT
 
-nvcc cublas_gemm.cu     -o cublas_gemm     -I/usr/local/cuda-11.3/include     -L/usr/local/cuda-11.3/lib64     -lcublas -lcudart     -arch=sm_75     -std=c++14
+miniGPT is a minimal, CUDA-accelerated implementation of a transformer-based language model inspired by GPT architectures. This project demonstrates the core components of transformer inference, including attention, feedforward layers, and positional encoding, all implemented from scratch in CUDA C++.
 
+## Project Requirements
+
+- **CUDA Toolkit** (version 11.0 or higher recommended)
+- **NVIDIA GPU** with compute capability 6.0+
+- **g++** (for compiling C++/CUDA code)
+- **Python 3.x** (for running notebooks and reference scripts)
+- **PyTorch** (for reference and comparison, optional)
+- **Jupyter Notebook** (for exploration and demonstration)
+
+## How to Build and Run
+
+1. **Clone the repository:**
+   ```sh
+   git clone https://github.com/yourusername/cuda-miniGPT.git
+   cd cuda-miniGPT
+    ```
+2. **Compile the CUDA source code:**
+   ```sh
+   bash scripts/compile.sh
+    ```
+
+3. **Compile the CUDA source code:**
+   ```sh
+   ./build/minigptinference
+    ```
+
+4. **(Optional) Explore the Jupyter Notebook:**
+   ```sh
+   jupyter notebook miniGPT.ipynb
+    ```
